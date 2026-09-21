@@ -47,6 +47,8 @@ const fileToDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
 
 export function JobImportDialog({ open, onOpenChange, onSaved, saveOne }: Props) {
   const [quick, setQuick] = useState<ApplicationRecord>(emptyApplication());
+  const [quickSource, setQuickSource] = useState("");
+  const [quickImage, setQuickImage] = useState<ImageSource | null>(null);
   const [text, setText] = useState(""), [links, setLinks] = useState("");
   const [rows, setRows] = useState<ImportRow[]>([]), [images, setImages] = useState<ImageSource[]>([]);
   const [sheet, setSheet] = useState<SheetData | null>(null), [mapping, setMapping] = useState<Record<string, string>>({});
@@ -55,10 +57,62 @@ export function JobImportDialog({ open, onOpenChange, onSaved, saveOne }: Props)
   const [bulk, setBulk] = useState({ status: "", appliedDate: "", channel: "", tags: "" });
   const [expanded, setExpanded] = useState(""), [clientToken, setClientToken] = useState(() => crypto.randomUUID());
   const fileRef = useRef<HTMLInputElement>(null);
+  const quickFileRef = useRef<HTMLInputElement>(null);
   const selectedCount = rows.filter((row) => row.selected).length;
   const progress = step === "source" ? 20 : step === "confirm" ? 65 : 100;
 
-  const reset = () => { setQuick(emptyApplication()); setText(""); setLinks(""); setRows([]); setImages([]); setSheet(null); setStep("source"); setMessage(""); setBatchId(""); setResult(null); setClientToken(crypto.randomUUID()); };
+  const reset = () => { setQuick(emptyApplication()); setQuickSource(""); setQuickImage(null); setText(""); setLinks(""); setRows([]); setImages([]); setSheet(null); setStep("source"); setMessage(""); setBatchId(""); setResult(null); setClientToken(crypto.randomUUID()); };
+  const extractQuick = async () => {
+    const sourceText = quickSource.trim();
+    if (!sourceText && !quickImage) return setMessage("请先粘贴岗位文字、招聘链接或选择截图");
+    if (/^https?:\/\/\S+$/i.test(sourceText) && !quickImage) {
+      let source = "招聘链接";
+      try { source = new URL(sourceText).hostname; } catch { /* keep the generic source label */ }
+      setQuick((current) => ({ ...current, jobUrl: sourceText, source }));
+      setMessage("链接已填入。这个页面可能需要登录，请继续填写公司和岗位，或补充截图/文字后再提取。");
+      return;
+    }
+    setBusy(true); setMessage("正在提取岗位信息，结果只会填入表单供你确认…");
+    try {
+      const data = await json("/api/ai/extract-jobs", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: sourceText, images: quickImage ? [quickImage] : [] }),
+      });
+      const job = data.jobs?.[0] as Record<string, string> | undefined;
+      if (!job) throw new Error("没有识别到岗位，请改用手动填写");
+      setQuick((current) => ({
+        ...current,
+        company: job.company || current.company,
+        position: job.position || current.position,
+        category: job.category || current.category,
+        location: job.location || current.location,
+        recruitmentType: job.recruitmentType || current.recruitmentType,
+        description: job.description || current.description,
+        requirements: job.requirements || current.requirements,
+        jobUrl: job.jobUrl || current.jobUrl,
+        source: job.source || current.source,
+        deadline: job.deadline || current.deadline,
+      }));
+      setMessage("已填入识别结果，请核对后再保存；缺失信息会保持为空。");
+    } catch (error) {
+      const local = sourceText ? parseJobText(sourceText)[0] : undefined;
+      if (local && (local.company || local.position)) {
+        setQuick((current) => ({
+          ...current,
+          company: local.company || current.company,
+          position: local.position || current.position,
+          category: local.category || current.category,
+          location: local.location || current.location,
+          description: local.description || current.description,
+          requirements: local.requirements || current.requirements,
+          jobUrl: local.jobUrl || current.jobUrl,
+          source: local.source || current.source,
+          deadline: local.deadline || current.deadline,
+        }));
+        setMessage("AI 暂时不可用，已用本地规则填入可识别内容；请核对并补充空白字段。");
+      } else setMessage(error instanceof Error ? error.message : "提取失败，请改用手动填写");
+    } finally { setBusy(false); }
+  };
   const updateRow = (id: string, key: keyof ImportRow, value: string | boolean) => setRows((old) => old.map((row) => row.tempId === id ? { ...row, [key]: value } : row));
   const addRows = async (next: ImportRow[]) => {
     if (!next.length) { setMessage("没有识别到可确认的资料"); return; }
@@ -150,7 +204,9 @@ export function JobImportDialog({ open, onOpenChange, onSaved, saveOne }: Props)
     <Progress value={progress} className="h-1.5" />
     {message && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{message}</div>}
     {step === "source" && <Tabs defaultValue="quick"><TabsList className="grid w-full grid-cols-2"><TabsTrigger value="quick">快速新增</TabsTrigger><TabsTrigger value="batch">批量导入</TabsTrigger></TabsList>
-      <TabsContent value="quick" className="space-y-5 pt-4"><div className="grid gap-4 sm:grid-cols-2"><Field label="公司名称 *" value={quick.company} onChange={(v) => setQuick({ ...quick, company: v })}/><Field label="岗位名称 *" value={quick.position} onChange={(v) => setQuick({ ...quick, position: v })}/><Field label="地点" value={quick.location} onChange={(v) => setQuick({ ...quick, location: v })}/><div><Label>状态</Label><Select value={quick.status} onValueChange={(v) => setQuick({ ...quick, status: v, appliedDate: v === "待投递" ? "" : quick.appliedDate })}><SelectTrigger className="mt-1.5 w-full"><SelectValue/></SelectTrigger><SelectContent>{STATUSES.map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent></Select></div></div>
+      <TabsContent value="quick" className="space-y-5 pt-4">
+        <section className="rounded-2xl border border-blue-200 bg-blue-50/40 p-4"><div className="flex items-center gap-2 font-semibold"><FileImage size={18}/>从资料快速提取</div><p className="mt-1 text-sm text-slate-600">粘贴岗位文字或招聘链接，也可以选择一张截图。识别结果只会填入下面的表单，由你确认后保存。</p><Textarea value={quickSource} onChange={(event) => setQuickSource(event.target.value)} className="mt-3 min-h-24 bg-white" placeholder="粘贴岗位 JD、招聘文字或链接…"/><input ref={quickFileRef} type="file" accept="image/*" className="hidden" onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; setQuickImage({ name: file.name, dataUrl: await fileToDataUrl(file), groupKey: "快速新增" }); event.target.value = ""; }}/><div className="mt-3 flex flex-wrap items-center gap-2"><Button type="button" variant="outline" onClick={() => quickFileRef.current?.click()}><Upload/>选择截图</Button>{quickImage && <span className="max-w-56 truncate text-sm text-slate-600">{quickImage.name}</span>}{quickImage && <Button type="button" size="sm" variant="ghost" onClick={() => setQuickImage(null)}>移除</Button>}<Button type="button" disabled={busy || (!quickSource.trim() && !quickImage)} onClick={extractQuick}>{busy ? <Loader2 className="animate-spin"/> : <Plus/>}提取到表单</Button></div>{quickImage && <p className="mt-2 text-xs text-amber-700">提取截图会发送到你配置的 AI 服务，请先遮住手机号、邮箱等无关个人信息。</p>}</section>
+        <div className="grid gap-4 sm:grid-cols-2"><Field label="公司名称 *" value={quick.company} onChange={(v) => setQuick({ ...quick, company: v })}/><Field label="岗位名称 *" value={quick.position} onChange={(v) => setQuick({ ...quick, position: v })}/><Field label="地点" value={quick.location} onChange={(v) => setQuick({ ...quick, location: v })}/><div><Label>状态</Label><Select value={quick.status} onValueChange={(v) => setQuick({ ...quick, status: v, appliedDate: v === "待投递" ? "" : quick.appliedDate })}><SelectTrigger className="mt-1.5 w-full"><SelectValue/></SelectTrigger><SelectContent>{STATUSES.map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent></Select></div></div>
         <details className="rounded-xl border p-4"><summary className="flex cursor-pointer items-center gap-2 font-medium">补充更多信息 <ChevronDown size={16}/></summary><div className="mt-4 grid gap-4 sm:grid-cols-2"><Field label="岗位链接" value={quick.jobUrl} onChange={(v) => setQuick({ ...quick, jobUrl: v })}/><Field label="信息来源" value={quick.source} onChange={(v) => setQuick({ ...quick, source: v })}/><Field label="投递日期（可留空）" type="date" value={quick.appliedDate} onChange={(v) => setQuick({ ...quick, appliedDate: v })}/><Field label="投递渠道" value={quick.channel} onChange={(v) => setQuick({ ...quick, channel: v })}/><div className="sm:col-span-2"><Label>岗位 JD</Label><Textarea className="mt-1.5 min-h-28" value={quick.description} onChange={(e) => setQuick({ ...quick, description: e.target.value })}/></div></div></details>
         <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" disabled={!quick.company.trim() || !quick.position.trim()} onClick={() => saveQuick(true)}>保存并继续新增</Button><Button disabled={!quick.company.trim() || !quick.position.trim()} onClick={() => saveQuick(false)}>保存岗位</Button></div>
       </TabsContent>
@@ -159,7 +215,7 @@ export function JobImportDialog({ open, onOpenChange, onSaved, saveOne }: Props)
         {sheet && <section className="rounded-2xl border border-blue-200 bg-blue-50/40 p-4"><div className="flex items-center gap-2 font-semibold"><FileSpreadsheet size={18}/>确认列名对应关系</div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{mapFields.map(([field, label]) => <div key={field}><Label>{label}</Label><Select value={mapping[field] || "__none"} onValueChange={(value) => setMapping({ ...mapping, [field]: value })}><SelectTrigger className="mt-1 w-full bg-white"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="__none">不导入此列</SelectItem>{sheet.headers.filter(Boolean).map((header) => <SelectItem key={header} value={header}>{header}</SelectItem>)}</SelectContent></Select></div>)}</div><Button className="mt-4" onClick={mapSheet}>进入确认表</Button></section>}
       </TabsContent></Tabs>}
     {step === "confirm" && <div className="space-y-4"><div className="flex flex-wrap items-end gap-3 rounded-xl bg-slate-50 p-3"><div><Label>统一状态</Label><Select value={bulk.status || "__keep"} onValueChange={(v) => setBulk({ ...bulk, status: v === "__keep" ? "" : v })}><SelectTrigger className="mt-1 w-32 bg-white"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="__keep">保持原值</SelectItem>{STATUSES.map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent></Select></div><Field label="统一投递日期" type="date" value={bulk.appliedDate} onChange={(v) => setBulk({ ...bulk, appliedDate: v })}/><Field label="统一渠道" value={bulk.channel} onChange={(v) => setBulk({ ...bulk, channel: v })}/><Field label="统一标签" value={bulk.tags} onChange={(v) => setBulk({ ...bulk, tags: v })}/><Button variant="outline" onClick={applyBulk}>应用到已选 {selectedCount} 行</Button>{rows.some((row) => row.error.startsWith("读取失败") && images.some((image) => image.name === row.originalName)) && <Button variant="outline" disabled={busy} onClick={() => extractImages(rows.filter((row) => row.error.startsWith("读取失败")).map((row) => row.originalName))}><RotateCcw/>只重试失败截图</Button>}</div>
-      <div className="overflow-x-auto rounded-xl border"><table className="w-full min-w-[1000px] text-sm"><thead className="bg-slate-50 text-left text-xs text-slate-500"><tr>{["选择","公司","岗位","地点","状态","投递日期","渠道","来源","重复处理","资料"].map((x) => <th key={x} className="px-3 py-2 font-medium">{x}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row.tempId} className={`border-t align-top ${row.error ? "bg-amber-50/40" : ""}`}><td className="px-3 py-3"><Checkbox checked={row.selected} onCheckedChange={(v) => updateRow(row.tempId, "selected", Boolean(v))}/></td>{(["company","position","location"] as const).map((key) => <td key={key} className="px-2 py-2"><Input value={row[key]} placeholder="待确认" className="min-w-28" onChange={(e) => updateRow(row.tempId, key, e.target.value)}/></td>)}<td className="px-2 py-2"><select value={row.status} className="h-9 rounded-md border bg-white px-2" onChange={(e) => updateRow(row.tempId, "status", e.target.value)}>{STATUSES.map((x) => <option key={x}>{x}</option>)}</select></td><td className="px-2 py-2"><Input type="date" value={row.appliedDate} className="min-w-32" onChange={(e) => updateRow(row.tempId, "appliedDate", e.target.value)}/></td><td className="px-2 py-2"><Input value={row.channel} className="min-w-24" onChange={(e) => updateRow(row.tempId, "channel", e.target.value)}/></td><td className="px-2 py-2"><Input value={row.source} className="min-w-24" onChange={(e) => updateRow(row.tempId, "source", e.target.value)}/></td><td className="px-2 py-2">{row.duplicateId ? <div className="min-w-32"><p className="mb-1 text-xs text-amber-700">{row.duplicateReason}</p><select value={row.duplicateAction} className="h-8 rounded-md border bg-white px-2" onChange={(e) => updateRow(row.tempId, "duplicateAction", e.target.value)}><option value="skip">跳过</option><option value="merge">补充已有信息</option><option value="keep">独立保留</option></select></div> : <span className="text-xs text-emerald-700">未发现重复</span>}</td><td className="px-2 py-2"><div className="flex gap-1"><Button size="sm" variant="ghost" onClick={() => setExpanded(expanded === row.tempId ? "" : row.tempId)}>对照</Button><Button size="icon" variant="ghost" onClick={() => setRows((old) => old.filter((x) => x.tempId !== row.tempId))}><Trash2 size={14}/></Button></div>{row.error && <p className="mt-1 max-w-48 text-xs text-amber-700">{row.error}</p>}</td></tr>)} </tbody></table></div>
+      <div className="overflow-x-auto rounded-xl border"><table className="w-full min-w-[1000px] text-sm"><thead className="bg-slate-50 text-left text-xs text-slate-500"><tr>{["选择","公司","岗位","地点","状态","投递日期","渠道","来源","重复处理","资料"].map((x) => <th key={x} className="px-3 py-2 font-medium">{x}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row.tempId} className={`border-t align-top ${row.error ? "bg-amber-50/40" : ""}`}><td className="px-3 py-3"><Checkbox checked={row.selected} onCheckedChange={(v) => updateRow(row.tempId, "selected", Boolean(v))}/></td>{(["company","position","location"] as const).map((key) => <td key={key} className="px-2 py-2"><Input value={row[key]} placeholder="待确认" className="min-w-28" onChange={(e) => updateRow(row.tempId, key, e.target.value)}/></td>)}<td className="px-2 py-2"><select value={row.status} className="h-9 rounded-md border bg-white px-2" onChange={(e) => updateRow(row.tempId, "status", e.target.value)}>{STATUSES.map((x) => <option key={x}>{x}</option>)}</select></td><td className="px-2 py-2"><Input type="date" value={row.appliedDate} className="min-w-32" onChange={(e) => updateRow(row.tempId, "appliedDate", e.target.value)}/></td><td className="px-2 py-2"><Input value={row.channel} className="min-w-24" onChange={(e) => updateRow(row.tempId, "channel", e.target.value)}/></td><td className="px-2 py-2"><Input value={row.source} className="min-w-24" onChange={(e) => updateRow(row.tempId, "source", e.target.value)}/></td><td className="px-2 py-2">{row.duplicateId ? <div className="min-w-32"><p className="mb-1 text-xs text-amber-700">{row.duplicateReason}</p><select value={row.duplicateAction} className="h-8 rounded-md border bg-white px-2" onChange={(e) => updateRow(row.tempId, "duplicateAction", e.target.value)}><option value="skip">跳过</option><option value="merge">补充已有信息</option><option value="keep">独立保留</option></select></div> : <span className="text-xs text-emerald-700">未发现重复</span>}</td><td className="px-2 py-2"><div className="flex gap-1"><Button size="sm" variant="ghost" onClick={() => setExpanded(expanded === row.tempId ? "" : row.tempId)}>对照</Button><Button size="icon" variant="ghost" onClick={() => setRows((old) => old.filter((x) => x.tempId !== row.tempId))}><Trash2 size={14}/></Button></div>{row.error && <p className="mt-1 max-w-48 text-xs text-amber-700">{row.error}</p>}</td></tr>)}</tbody></table></div>
       {expanded && (() => { const row = rows.find((x) => x.tempId === expanded); return row ? <div className="rounded-xl border bg-slate-50 p-4"><p className="font-medium">原始资料 · {row.originalName || "未命名"}</p>{row.rawText.startsWith("data:image/") ? <><span className="sr-only">招聘截图预览</span><img src={row.rawText} alt="招聘截图" className="mt-3 max-h-80 rounded-lg object-contain"/></> : <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap text-sm text-slate-600">{row.rawText || "无原始文字"}</pre>}</div> : null; })()}
       <div className="flex flex-wrap justify-between gap-3"><Button variant="outline" onClick={() => setStep("source")}>返回补充资料</Button><div className="flex gap-2"><Button variant="ghost" onClick={() => setRows((old) => old.map((x) => ({ ...x, selected: true })))}>全选</Button><Button disabled={!selectedCount || busy} onClick={commit}>{busy ? <Loader2 className="animate-spin"/> : <Check/>}批量保存 {selectedCount} 项</Button></div></div>
     </div>}
