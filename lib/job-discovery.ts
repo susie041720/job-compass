@@ -81,6 +81,17 @@ const skillTerms = [
 const norm = (value = "") => value.trim().toLowerCase().replace(/\s+/g, "");
 const includesAny = (text: string, terms: string[]) => terms.filter((term) => text.includes(term.toLowerCase()));
 const unique = (values: string[]) => [...new Set(values.filter(Boolean))];
+const cityAliases: Record<string, string[]> = {
+  香港: ["香港", "hongkong", "hongkongsar", "kwuntong"],
+  深圳: ["深圳", "shenzhen"],
+  北京: ["北京", "beijing"],
+  上海: ["上海", "shanghai"],
+};
+
+function locationIncludesCity(location: string, city: string) {
+  const normalizedLocation = norm(location);
+  return (cityAliases[city] || [city]).some((alias) => normalizedLocation.includes(norm(alias)));
+}
 
 export function discoveryFingerprint(job: DiscoveryJobInput) {
   if (job.source?.trim() && job.sourceJobId?.trim()) return `source:${norm(job.source)}:${norm(job.sourceJobId)}`;
@@ -117,9 +128,9 @@ export function calculateDiscoveryMatch(
   const reasons: string[] = [], confirmations: string[] = [], mismatches: string[] = [];
 
   if (job.location && preferences.preferredCities.length) {
-    const cityMatches = preferences.preferredCities.some((city) => job.location!.includes(city));
+    const cityMatches = preferences.preferredCities.some((city) => locationIncludesCity(job.location!, city));
     if (!cityMatches) mismatches.push(`工作地点“${job.location}”不在当前目标城市中`);
-    else if (preferences.priorityCities.some((city) => job.location!.includes(city))) reasons.push("位于优先城市");
+    else if (preferences.priorityCities.some((city) => locationIncludesCity(job.location!, city))) reasons.push("位于优先城市");
     else reasons.push("位于可接受城市");
   } else if (!job.location) confirmations.push("工作地点待确认");
   else confirmations.push("目标城市尚未设置");
@@ -132,6 +143,8 @@ export function calculateDiscoveryMatch(
 
   if (graduationMismatch(job.graduationRequirement || job.requirements || "", preferences.graduationDate)) {
     mismatches.push(`明确的毕业年份要求未包含 ${preferences.graduationDate.slice(0, 4)} 届`);
+  } else if (/final[- ]year|应届|毕业年级/i.test(job.graduationRequirement || job.requirements || "") && preferences.graduationDate) {
+    confirmations.push(`岗位提到应届或毕业年级学生，你预计 ${preferences.graduationDate.slice(0, 7)} 毕业，请向招聘方确认资格`);
   } else if (!job.graduationRequirement && !/20\d{2}届/.test(job.requirements || "")) {
     confirmations.push("毕业年份要求待确认");
   }

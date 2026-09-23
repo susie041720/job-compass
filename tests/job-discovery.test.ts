@@ -32,6 +32,16 @@ test("缺失硬条件时标记待确认而不是擅自排除", () => {
   assert.match(result.confirmations.join(" "), /招聘类型待确认/);
 });
 
+test("英文地点能匹配用户设置的中文目标城市", () => {
+  const preferences = { ...defaultDiscoveryPreferences(), preferredCities: ["深圳", "香港"], priorityCities: ["深圳", "香港"], recruitmentTypes: ["实习"] };
+  const result = calculateDiscoveryMatch({
+    company: "示例公司", position: "Marketing Intern", location: "Kwun Tong, Hong Kong", recruitmentType: "实习", requirements: "Final-year students are welcomed",
+  }, { ...preferences, graduationDate: "2028-07" }, "市场分析", "", new Date("2026-09-23T00:00:00Z"));
+  assert.equal(result.eligible, true);
+  assert.match(result.reasons.join(" "), /优先城市/);
+  assert.match(result.confirmations.join(" "), /确认资格/);
+});
+
 test("来源岗位 ID 优先于链接和文字生成去重指纹", () => {
   assert.equal(discoveryFingerprint({ source: "腾讯招聘", sourceJobId: "A-123", jobUrl: "https://example.com/a" }), "source:腾讯招聘:a-123");
 });
