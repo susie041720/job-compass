@@ -24,21 +24,25 @@ const bufferToBase64 = (buffer: ArrayBuffer) => { let value = ""; const bytes = 
 
 async function extractFile(file: File) {
   const buffer = await file.arrayBuffer();
+  // PDF.js transfers the ArrayBuffer passed to its worker, which detaches that
+  // buffer in the browser. Preserve the original file before handing a copy to
+  // any parser so the source document can still be saved after extraction.
+  const originalData = bufferToBase64(buffer);
   if (/\.docx$/i.test(file.name)) {
     const mammoth = await import("mammoth/mammoth.browser");
-    const result = await mammoth.extractRawText({ arrayBuffer: buffer });
-    return { text: result.value.trim(), data: bufferToBase64(buffer) };
+    const result = await mammoth.extractRawText({ arrayBuffer: buffer.slice(0) });
+    return { text: result.value.trim(), data: originalData };
   }
   if (/\.pdf$/i.test(file.name)) {
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
     pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-    const document = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
+    const document = await pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
     const pages: string[] = [];
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber++) {
       const page = await document.getPage(pageNumber), content = await page.getTextContent();
       pages.push(content.items.map((item) => "str" in item ? item.str : "").join(" "));
     }
-    return { text: pages.join("\n\n").trim(), data: bufferToBase64(buffer) };
+    return { text: pages.join("\n\n").trim(), data: originalData };
   }
   throw new Error("仅支持 PDF 或 DOCX 基础简历");
 }
