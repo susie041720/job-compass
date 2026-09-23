@@ -50,6 +50,7 @@ export const jobs = sqliteTable("jobs", {
   id: text("id").primaryKey(),
   company: text("company").notNull().default(""),
   position: text("position").notNull().default(""),
+  department: text("department").notNull().default(""),
   category: text("category").notNull().default("其他"),
   location: text("location").notNull().default(""),
   recruitmentType: text("recruitment_type").notNull().default("校招"),
@@ -107,6 +108,78 @@ export const importBatches = sqliteTable("import_batches", {
   createdAt: text("created_at").notNull(),
   undoneAt: text("undone_at"),
 });
+
+// Discovery data stays separate from the user's canonical job library. A row
+// is promoted into `jobs` only after the user explicitly confirms an
+// application, so browsing and saving recommendations never changes existing
+// application statistics.
+export const discoveryPreferences = sqliteTable("discovery_preferences", {
+  id: text("id").primaryKey(),
+  baseResumeId: text("base_resume_id"),
+  preferredCities: text("preferred_cities").notNull().default("[]"),
+  priorityCities: text("priority_cities").notNull().default("[]"),
+  recruitmentTypes: text("recruitment_types").notNull().default("[]"),
+  targetDirections: text("target_directions").notNull().default("[]"),
+  graduationDate: text("graduation_date").notNull().default(""),
+  availableFrom: text("available_from").notNull().default(""),
+  searchStage: text("search_stage").notNull().default("实习"),
+  companyPreferences: text("company_preferences").notNull().default("[]"),
+  extraKeywords: text("extra_keywords").notNull().default("[]"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const discoveredJobs = sqliteTable("discovered_jobs", {
+  id: text("id").primaryKey(),
+  company: text("company").notNull().default(""),
+  position: text("position").notNull().default(""),
+  department: text("department").notNull().default(""),
+  category: text("category").notNull().default("其他"),
+  location: text("location").notNull().default(""),
+  recruitmentType: text("recruitment_type").notNull().default(""),
+  description: text("description").notNull().default(""),
+  requirements: text("requirements").notNull().default(""),
+  jobUrl: text("job_url").notNull().default(""),
+  normalizedUrl: text("normalized_url").notNull().default(""),
+  source: text("source").notNull().default(""),
+  sourceKind: text("source_kind").notNull().default("manual"),
+  sourceJobId: text("source_job_id").notNull().default(""),
+  publishedDate: text("published_date").notNull().default(""),
+  deadline: text("deadline").notNull().default(""),
+  graduationRequirement: text("graduation_requirement").notNull().default(""),
+  startDate: text("start_date").notNull().default(""),
+  rawText: text("raw_text").notNull().default(""),
+  availabilityStatus: text("availability_status").notNull().default("active"),
+  firstSeenAt: text("first_seen_at").notNull(),
+  lastSeenAt: text("last_seen_at").notNull(),
+  fetchedAt: text("fetched_at").notNull(),
+  sourceUpdatedAt: text("source_updated_at").notNull().default(""),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  index("idx_discovered_jobs_company_position").on(table.company, table.position),
+  index("idx_discovered_jobs_normalized_url").on(table.normalizedUrl),
+  index("idx_discovered_jobs_source_job_id").on(table.source, table.sourceJobId),
+  index("idx_discovered_jobs_published_date").on(table.publishedDate),
+  index("idx_discovered_jobs_status").on(table.availabilityStatus),
+]);
+
+export const discoveryStates = sqliteTable("discovery_states", {
+  jobId: text("job_id").primaryKey().references(() => discoveredJobs.id, { onDelete: "cascade" }),
+  isFavorite: integer("is_favorite", { mode: "boolean" }).notNull().default(false),
+  isDismissed: integer("is_dismissed", { mode: "boolean" }).notNull().default(false),
+  dismissReason: text("dismiss_reason").notNull().default(""),
+  viewCount: integer("view_count").notNull().default(0),
+  outboundCount: integer("outbound_count").notNull().default(0),
+  lastViewedAt: text("last_viewed_at").notNull().default(""),
+  lastOutboundAt: text("last_outbound_at").notNull().default(""),
+  appliedJobId: text("applied_job_id"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  index("idx_discovery_states_favorite").on(table.isFavorite),
+  index("idx_discovery_states_dismissed").on(table.isDismissed),
+]);
 
 export const importItems = sqliteTable("import_items", {
   id: text("id").primaryKey(),

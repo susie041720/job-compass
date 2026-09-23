@@ -22,6 +22,13 @@
       "when": 1789794356826,
       "tag": "0002_great_phalanx",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1790155824420,
+      "tag": "0003_job_discovery",
+      "breakpoints": true
     }
   ]
 }

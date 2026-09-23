@@ -2,7 +2,7 @@ export const STATUSES = ["待投递", "已投递", "笔试", "面试", "等待�
 export const CATEGORIES = ["运营", "用户运营", "内容运营", "策略运营", "商业分析", "数据分析", "其他"] as const;
 
 export type ApplicationRecord = {
-  id: string; company: string; position: string; category: string; location: string;
+  id: string; company: string; position: string; department?: string; category: string; location: string;
   recruitmentType: string; description: string; requirements: string; jobUrl: string;
   source: string; appliedDate: string; deadline: string; channel: string; status: string;
   resumeVersion: string; notes: string; companyIntro: string; interviewExperience: string;

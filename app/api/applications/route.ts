@@ -14,7 +14,7 @@ function normalize(body: Record<string, unknown>) {
   const company = clean(body.company), position = clean(body.position);
   return {
     job: {
-      company, position, category: clean(body.category) || "其他", location: clean(body.location),
+      company, position, department: clean(body.department), category: clean(body.category) || "其他", location: clean(body.location),
       recruitmentType: clean(body.recruitmentType) || "校招", description: clean(body.description),
       requirements: clean(body.requirements), jobUrl: clean(body.jobUrl), normalizedUrl: normalizeUrl(clean(body.jobUrl)),
       source: clean(body.source), sourceJobId: clean(body.sourceJobId), publishedDate: clean(body.publishedDate),
@@ -34,7 +34,7 @@ function normalize(body: Record<string, unknown>) {
 type Joined = { job: typeof jobs.$inferSelect; application: typeof jobApplications.$inferSelect | null };
 function combine({ job: j, application: a }: Joined) {
   return {
-    id: j.id, applicationId: a?.id, company: j.company, position: j.position, category: j.category,
+    id: j.id, applicationId: a?.id, company: j.company, position: j.position, department: j.department, category: j.category,
     location: j.location, recruitmentType: j.recruitmentType, description: j.description,
     requirements: j.requirements, jobUrl: j.jobUrl, source: j.source, sourceJobId: j.sourceJobId,
     publishedDate: j.publishedDate, appliedDate: a?.appliedDate || "", deadline: j.deadline,
@@ -53,7 +53,7 @@ async function ensureLegacyData() {
   const legacy = await db.select().from(legacyApplications);
   for (const item of legacy) {
     const jobId = `legacy-job-${item.id}`;
-    await db.insert(jobs).values({ id: jobId, company: item.company, position: item.position, category: item.category,
+    await db.insert(jobs).values({ id: jobId, company: item.company, position: item.position, department: "", category: item.category,
       location: item.location, recruitmentType: item.recruitmentType, description: item.description, requirements: item.requirements,
       jobUrl: item.jobUrl, normalizedUrl: normalizeUrl(item.jobUrl), source: item.source, sourceJobId: "", publishedDate: "",
       deadline: item.deadline, tags: "", rawText: "", companyIntro: item.companyIntro, interviewExperience: item.interviewExperience,

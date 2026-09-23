@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
         }
         const status = STATUSES.includes(row.status as typeof STATUSES[number]) ? row.status : "待投递";
         const jobValues = {
-          company: clean(row.company), position: clean(row.position), category: clean(row.category) || "其他",
+          company: clean(row.company), position: clean(row.position), department: "", category: clean(row.category) || "其他",
           location: clean(row.location), recruitmentType: clean(row.recruitmentType) || "校招",
           description: clean(row.description), requirements: clean(row.requirements), jobUrl: clean(row.jobUrl),
           normalizedUrl: normalizeUrl(clean(row.jobUrl)), source: clean(row.source), sourceJobId: clean(row.sourceJobId),

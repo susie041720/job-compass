@@ -1,7 +1,7 @@
 /* eslint-disable react-hooks/set-state-in-effect, @typescript-eslint/no-explicit-any */
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { BriefcaseBusiness, ChartNoAxesCombined, CirclePlus, Download, FileText, LayoutDashboard, LibraryBig, Pencil, Search, Sparkles, Trash2, Upload, X } from "lucide-react";
+import { BriefcaseBusiness, ChartNoAxesCombined, CirclePlus, Compass, Download, FileText, LayoutDashboard, LibraryBig, Pencil, Search, Sparkles, Trash2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -14,13 +14,14 @@ import { ApplicationRecord, CATEGORIES, STATUSES, calculateStats, emptyApplicati
 import { toCsv } from "@/lib/csv";
 import { JobImportDialog } from "@/components/job-import-dialog";
 import { ResumeStudio } from "@/components/resume-studio";
+import { JobDiscovery } from "@/components/job-discovery";
 
 const demo: ApplicationRecord[] = [
   { ...emptyApplication(), id:"demo-1", company:"星云科技", position:"用户运营", category:"用户运营", location:"上海", status:"面试", appliedDate:"2026-09-16", deadline:"2026-09-30", source:"公司官网", channel:"官网", resumeVersion:"运营版 v3", description:"负责用户增长活动、生命周期运营与数据复盘。", requirements:"商业分析或相关专业，具备数据意识和沟通能力。", companyIntro:"面向年轻用户的数字生活服务平台。", interviewExperience:"一面重点讨论用户分层和活动复盘。", preparationNotes:"准备一个完整的用户增长案例。", notes:"9 月 20 日二面", createdAt:"2026-09-16T06:00:00Z", updatedAt:"2026-09-18T06:30:00Z" },
   { ...emptyApplication(), id:"demo-2", company:"远见咨询", position:"商业分析师", category:"商业分析", location:"北京", status:"已投递", appliedDate:"2026-09-12", source:"实习僧", channel:"招聘平台", resumeVersion:"商业分析版 v2", description:"支持行业研究、经营分析与策略项目。", requirements:"熟练使用 Excel、SQL，逻辑清晰。", notes:"一周后跟进", createdAt:"2026-09-12T06:00:00Z", updatedAt:"2026-09-17T03:20:00Z" },
   { ...emptyApplication(), id:"demo-3", company:"青禾内容", position:"内容策略运营", category:"内容运营", location:"杭州", status:"待投递", appliedDate:"", deadline:"2026-09-25", source:"公众号", resumeVersion:"", description:"负责内容策略、作者运营及内容效果分析。", createdAt:"2026-09-08T06:00:00Z", updatedAt:"2026-09-16T07:00:00Z" },
 ];
-const nav = [{id:"dashboard",label:"数据概览",icon:LayoutDashboard},{id:"applications",label:"岗位与投递",icon:BriefcaseBusiness},{id:"library",label:"岗位资料库",icon:LibraryBig},{id:"resumes",label:"简历工作台",icon:FileText}];
+const nav = [{id:"dashboard",label:"数据概览",icon:LayoutDashboard},{id:"discovery",label:"岗位发现",icon:Compass},{id:"applications",label:"岗位与投递",icon:BriefcaseBusiness},{id:"library",label:"岗位资料库",icon:LibraryBig},{id:"resumes",label:"简历工作台",icon:FileText}];
 const statusStyle: Record<string,string> = {"待投递":"bg-slate-100 text-slate-700","已投递":"bg-blue-100 text-blue-700","笔试":"bg-violet-100 text-violet-700","面试":"bg-amber-100 text-amber-800","等待结果":"bg-cyan-100 text-cyan-800","获得Offer":"bg-emerald-100 text-emerald-700","已拒绝":"bg-rose-100 text-rose-700","已结束":"bg-zinc-100 text-zinc-600"};
 
 async function requestJson(url:string, options?:RequestInit): Promise<any> {
@@ -52,6 +53,7 @@ export default function JobCompass(){
         <div className="mb-5 flex gap-2 overflow-x-auto lg:hidden">{nav.map(({id,label,icon:Icon})=><button key={id} onClick={()=>setActive(id)} className={`flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-sm font-medium ${active===id?"bg-[#0d2547] text-white":"bg-white text-slate-600"}`}><Icon size={16}/>{label}</button>)}</div>
         {notice&&<div className="mb-5 flex items-center justify-between rounded-xl border border-[#bce9e1] bg-[#e9fbf7] px-4 py-3 text-sm text-[#07675c]"><span>{notice}</span><button aria-label="关闭提示" onClick={()=>setNotice("")}><X size={16}/></button></div>}
         {active==="dashboard"&&<Dashboard items={items} stats={stats} open={(x)=>setDetail(x)} loading={loading}/>}
+        {active==="discovery"&&<JobDiscovery onApplicationCreated={reload}/>}
         {active==="applications"&&<><PageTitle eyebrow="APPLICATIONS" title="岗位与投递" desc="新增岗位不代表已经投递；状态与实际使用的简历会分别记录"/><FilterBar query={query} setQuery={setQuery} status={status} setStatus={setStatus} category={category} setCategory={setCategory} location={location} setLocation={setLocation} sort={sort} setSort={setSort} locations={locations} categories={categories} exportCsv={exportCsv} importCsv={()=>setImportOpen(true)}/><ApplicationList items={filtered} loading={loading} open={setDetail} edit={setEditing} remove={setRemoving} changeStatus={changeStatus}/></>}
         {active==="library"&&<Library items={filtered} open={setDetail}/>}
         {active==="resumes"&&<ResumeStudio jobs={items} initialJob={optimizeJob} onInitialJobHandled={()=>setOptimizeJob(null)} onUseVersion={async(job,version)=>{await save({...job,resumeVersion:version.title,resumeVersionId:version.id});setNotice("已关联为这次投递实际使用的简历版本")}}/>}
