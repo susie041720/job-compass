@@ -4,6 +4,7 @@ import { getDb } from "@/db";
 import { applications as legacyApplications, baseResumes, jobApplications, jobs, resumeVersions } from "@/db/schema";
 import { STATUSES } from "@/lib/application";
 import { normalizeUrl } from "@/lib/job-import";
+import { blockPublicDemoMutation } from "@/lib/public-demo";
 
 const badRequest = (message: string) => NextResponse.json({ error: message }, { status: 400 });
 const clean = (value: unknown) => typeof value === "string" ? value.trim() : "";
@@ -103,6 +104,8 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const blocked = blockPublicDemoMutation();
+  if (blocked) return blocked;
   try {
     const data = normalize(await request.json() as Record<string, unknown>);
     if ((!data.job.company || !data.job.position) && !data.job.isDraft) return badRequest("请填写公司名称和岗位名称");
@@ -123,6 +126,8 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
+  const blocked = blockPublicDemoMutation();
+  if (blocked) return blocked;
   try {
     const body = await request.json() as Record<string, unknown>, id = clean(body.id);
     if (!id) return badRequest("缺少岗位编号");
@@ -151,6 +156,8 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  const blocked = blockPublicDemoMutation();
+  if (blocked) return blocked;
   const id = new URL(request.url).searchParams.get("id");
   if (!id) return badRequest("缺少岗位编号");
   try {

@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchOfficialJob } from "@/lib/discovery-sources";
+import { blockPublicDemoMutation } from "@/lib/public-demo";
 
 export async function POST(request: NextRequest) {
+  const blocked = blockPublicDemoMutation();
+  if (blocked) return blocked;
   try {
     const body = await request.json() as { urls?: unknown };
     const urls = Array.isArray(body.urls)

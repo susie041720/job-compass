@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { discoveredJobs, discoveryStates, jobApplications, jobs } from "@/db/schema";
 import { normalizeUrl } from "@/lib/job-import";
+import { blockPublicDemoMutation } from "@/lib/public-demo";
 
 const clean = (value: unknown) => typeof value === "string" ? value.trim() : "";
 const norm = (value = "") => value.trim().toLowerCase().replace(/\s+/g, "");
@@ -14,6 +15,8 @@ function sameJob(discovered: typeof discoveredJobs.$inferSelect, existing: typeo
 }
 
 export async function POST(request: NextRequest) {
+  const blocked = blockPublicDemoMutation();
+  if (blocked) return blocked;
   try {
     const body = await request.json() as Record<string, unknown>, jobId = clean(body.jobId), action = clean(body.action);
     if (!jobId || !action) return NextResponse.json({ error: "缺少岗位或操作类型" }, { status: 400 });
@@ -62,4 +65,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "操作失败，已有岗位和投递数据未改变" }, { status: 400 });
   }
 }
-

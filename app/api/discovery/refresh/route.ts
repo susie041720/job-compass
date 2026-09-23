@@ -4,8 +4,11 @@ import { getDb } from "@/db";
 import { discoveredJobs } from "@/db/schema";
 import { fetchOfficialJob, parseOfficialJobUrl } from "@/lib/discovery-sources";
 import { normalizeUrl } from "@/lib/job-import";
+import { blockPublicDemoMutation } from "@/lib/public-demo";
 
 export async function POST() {
+  const blocked = blockPublicDemoMutation();
+  if (blocked) return blocked;
   try {
     const db = getDb();
     const candidates = (await db.select().from(discoveredJobs))

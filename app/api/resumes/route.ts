@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { baseResumes, discoveryPreferences, jobApplications, resumeVersions } from "@/db/schema";
+import { blockPublicDemoMutation } from "@/lib/public-demo";
 
 const clean = (value: unknown) => typeof value === "string" ? value.trim() : "";
 
@@ -47,6 +48,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const blocked = blockPublicDemoMutation();
+  if (blocked) return blocked;
   try {
     const body = await request.json() as Record<string, unknown>;
     const name = clean(body.name), extractedText = clean(body.extractedText);
@@ -65,6 +68,8 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
+  const blocked = blockPublicDemoMutation();
+  if (blocked) return blocked;
   try {
     const body = await request.json() as Record<string, unknown>, id = clean(body.id);
     if (!id) return NextResponse.json({ error: "缺少简历编号" }, { status: 400 });
@@ -76,6 +81,8 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  const blocked = blockPublicDemoMutation();
+  if (blocked) return blocked;
   const id = new URL(request.url).searchParams.get("id");
   if (!id) return NextResponse.json({ error: "缺少简历编号" }, { status: 400 });
   try {

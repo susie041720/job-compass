@@ -3,6 +3,7 @@ import { desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { baseResumes, discoveryPreferences } from "@/db/schema";
 import { defaultDiscoveryPreferences, DiscoveryPreferences } from "@/lib/job-discovery";
+import { blockPublicDemoMutation } from "@/lib/public-demo";
 
 const clean = (value: unknown) => typeof value === "string" ? value.trim() : "";
 const cleanList = (value: unknown) => Array.isArray(value)
@@ -42,6 +43,8 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
+  const blocked = blockPublicDemoMutation();
+  if (blocked) return blocked;
   try {
     const body = await request.json() as Record<string, unknown>, now = new Date().toISOString();
     const preferredCities = cleanList(body.preferredCities), priorityCities = cleanList(body.priorityCities);
@@ -67,4 +70,3 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: "保存求职偏好失败，原有设置未改变" }, { status: 400 });
   }
 }
-

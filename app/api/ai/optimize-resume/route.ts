@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { env } from "cloudflare:workers";
 import { assertGroundedDraft, redactPersonalInfo } from "@/lib/resume-safety";
+import { blockPublicDemoMutation } from "@/lib/public-demo";
 
 type AiEnv = { AI_API_KEY?: string; AI_MODEL?: string; AI_API_BASE_URL?: string };
 
 export async function POST(request: NextRequest) {
+  const blocked = blockPublicDemoMutation();
+  if (blocked) return blocked;
   try {
     const config = env as unknown as AiEnv;
     if (!config.AI_API_KEY) return NextResponse.json({ error: "尚未配置 AI。基础简历和岗位数据不会受到影响。" }, { status: 412 });

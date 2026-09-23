@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { applications } from "@/db/schema";
 import { STATUSES } from "@/lib/application";
+import { blockPublicDemoMutation } from "@/lib/public-demo";
 
 export async function POST(request: NextRequest) {
+  const blocked = blockPublicDemoMutation();
+  if (blocked) return blocked;
   try {
     const rows = await request.json() as Record<string, string>[];
     if (!Array.isArray(rows) || rows.length > 500) return NextResponse.json({ error: "一次最多导入 500 条记录" }, { status: 400 });

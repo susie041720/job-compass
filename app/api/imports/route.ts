@@ -4,6 +4,7 @@ import { getDb } from "@/db";
 import { importBatches, importItems, jobApplications, jobs } from "@/db/schema";
 import { ImportRow, jobFingerprint, normalizeUrl } from "@/lib/job-import";
 import { STATUSES } from "@/lib/application";
+import { blockPublicDemoMutation } from "@/lib/public-demo";
 
 const clean = (value: unknown) => typeof value === "string" ? value.trim() : "";
 const norm = (value: string) => value.trim().toLowerCase().replace(/\s+/g, "");
@@ -27,6 +28,8 @@ function duplicateFor(row: ImportRow, existing: (typeof jobs.$inferSelect)[]) {
 }
 
 export async function POST(request: NextRequest) {
+  const blocked = blockPublicDemoMutation();
+  if (blocked) return blocked;
   try {
     const body = await request.json() as { action?: string; rows?: ImportRow[]; clientToken?: string; label?: string };
     const rows = Array.isArray(body.rows) ? body.rows.slice(0, 500) : [];
@@ -117,6 +120,8 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  const blocked = blockPublicDemoMutation();
+  if (blocked) return blocked;
   const batchId = new URL(request.url).searchParams.get("batchId");
   if (!batchId) return NextResponse.json({ error: "缺少导入批次编号" }, { status: 400 });
   try {

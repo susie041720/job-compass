@@ -4,6 +4,7 @@ import { getDb } from "@/db";
 import { baseResumes, discoveredJobs, discoveryPreferences, discoveryStates, jobApplications, jobs } from "@/db/schema";
 import { calculateDiscoveryMatch, defaultDiscoveryPreferences, DiscoveryJobInput, DiscoveryPreferences, discoveryFingerprint } from "@/lib/job-discovery";
 import { normalizeUrl } from "@/lib/job-import";
+import { blockPublicDemoMutation } from "@/lib/public-demo";
 
 const clean = (value: unknown) => typeof value === "string" ? value.trim() : "";
 const list = (value: string) => { try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed : []; } catch { return []; } };
@@ -55,6 +56,8 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const blocked = blockPublicDemoMutation();
+  if (blocked) return blocked;
   try {
     const body = await request.json() as { rows?: DiscoveryJobInput[] } & DiscoveryJobInput;
     const incoming = (Array.isArray(body.rows) ? body.rows : [body]).slice(0, 200);
@@ -88,4 +91,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "导入发现岗位失败，已有数据未改变" }, { status: 400 });
   }
 }
-

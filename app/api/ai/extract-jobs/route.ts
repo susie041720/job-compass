@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { env } from "cloudflare:workers";
+import { blockPublicDemoMutation } from "@/lib/public-demo";
 
 type AiEnv = { AI_API_KEY?: string; AI_MODEL?: string; AI_API_BASE_URL?: string; AI_PROVIDER?: string };
 
@@ -9,6 +10,8 @@ function parseJson(text: string) {
 }
 
 export async function POST(request: NextRequest) {
+  const blocked = blockPublicDemoMutation();
+  if (blocked) return blocked;
   try {
     const config = env as unknown as AiEnv;
     if (!config.AI_API_KEY) return NextResponse.json({ error: "尚未配置 AI。你仍可手动填写，或先导入文字、CSV 和 Excel。" }, { status: 412 });
