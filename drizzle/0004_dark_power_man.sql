@@ -1,0 +1,1 @@
+ALTER TABLE `job_applications` ADD `resume_source_type` text DEFAULT '' NOT NULL;

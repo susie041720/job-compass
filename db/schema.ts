@@ -87,6 +87,7 @@ export const jobApplications = sqliteTable("job_applications", {
   channel: text("channel").notNull().default(""),
   status: text("status").notNull().default("已投递"),
   resumeVersionId: text("resume_version_id"),
+  resumeSourceType: text("resume_source_type").notNull().default(""),
   legacyResumeLabel: text("legacy_resume_label").notNull().default(""),
   notes: text("notes").notNull().default(""),
   createdAt: text("created_at").notNull(),

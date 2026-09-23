@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { applications as legacyApplications, jobApplications, jobs } from "@/db/schema";
+import { applications as legacyApplications, baseResumes, jobApplications, jobs, resumeVersions } from "@/db/schema";
 import { STATUSES } from "@/lib/application";
 import { normalizeUrl } from "@/lib/job-import";
 
@@ -26,9 +26,32 @@ function normalize(body: Record<string, unknown>) {
     application: {
       appliedDate: clean(body.appliedDate), channel: clean(body.channel), status,
       legacyResumeLabel: clean(body.resumeVersion), resumeVersionId: clean(body.resumeVersionId) || null,
+      resumeSourceType: clean(body.resumeSourceType),
       notes: clean(body.notes),
     },
   };
+}
+
+async function resolveResumeSelection(db: ReturnType<typeof getDb>, application: ReturnType<typeof normalize>["application"]) {
+  const id = application.resumeVersionId;
+  if (!id) return { ...application, resumeVersionId: null, resumeSourceType: "" };
+  if (application.resumeSourceType === "base") {
+    const found = await db.select({ name: baseResumes.name }).from(baseResumes).where(eq(baseResumes.id, id)).limit(1);
+    if (!found[0]) throw new Error("所选基础简历已不存在，请重新选择");
+    return { ...application, resumeSourceType: "base", legacyResumeLabel: found[0].name };
+  }
+  if (application.resumeSourceType === "version") {
+    const found = await db.select({ title: resumeVersions.title }).from(resumeVersions).where(eq(resumeVersions.id, id)).limit(1);
+    if (!found[0]) throw new Error("所选岗位定制简历已不存在，请重新选择");
+    return { ...application, resumeSourceType: "version", legacyResumeLabel: found[0].title };
+  }
+  // Older records already stored a custom version id before the source type
+  // was introduced. Infer it once so existing data stays connected.
+  const version = await db.select({ title: resumeVersions.title }).from(resumeVersions).where(eq(resumeVersions.id, id)).limit(1);
+  if (version[0]) return { ...application, resumeSourceType: "version", legacyResumeLabel: version[0].title };
+  const base = await db.select({ name: baseResumes.name }).from(baseResumes).where(eq(baseResumes.id, id)).limit(1);
+  if (base[0]) return { ...application, resumeSourceType: "base", legacyResumeLabel: base[0].name };
+  throw new Error("投递记录关联的简历已不存在，请重新选择");
 }
 
 type Joined = { job: typeof jobs.$inferSelect; application: typeof jobApplications.$inferSelect | null };
@@ -39,7 +62,7 @@ function combine({ job: j, application: a }: Joined) {
     requirements: j.requirements, jobUrl: j.jobUrl, source: j.source, sourceJobId: j.sourceJobId,
     publishedDate: j.publishedDate, appliedDate: a?.appliedDate || "", deadline: j.deadline,
     channel: a?.channel || "", status: a?.status || "待投递", resumeVersion: a?.legacyResumeLabel || "",
-    resumeVersionId: a?.resumeVersionId || "", notes: a?.notes || "", tags: j.tags, rawText: j.rawText,
+    resumeVersionId: a?.resumeVersionId || "", resumeSourceType: a?.resumeSourceType || "", notes: a?.notes || "", tags: j.tags, rawText: j.rawText,
     companyIntro: j.companyIntro, interviewExperience: j.interviewExperience,
     writtenTestMaterials: j.writtenTestMaterials, commonQuestions: j.commonQuestions,
     preparationNotes: j.preparationNotes, isDraft: j.isDraft, createdAt: j.createdAt, updatedAt: j.updatedAt,
@@ -62,7 +85,7 @@ async function ensureLegacyData() {
     if (item.status !== "准备投递" || item.appliedDate || item.channel || item.resumeVersion) {
       await db.insert(jobApplications).values({ id: `legacy-app-${item.id}`, jobId, appliedDate: item.appliedDate,
         channel: item.channel, status: item.status === "准备投递" ? "已投递" : item.status, resumeVersionId: null,
-        legacyResumeLabel: item.resumeVersion, notes: item.notes, createdAt: item.createdAt, updatedAt: item.updatedAt }).onConflictDoNothing();
+        resumeSourceType: "", legacyResumeLabel: item.resumeVersion, notes: item.notes, createdAt: item.createdAt, updatedAt: item.updatedAt }).onConflictDoNothing();
     }
   }
 }
@@ -84,6 +107,7 @@ export async function POST(request: NextRequest) {
     const data = normalize(await request.json() as Record<string, unknown>);
     if ((!data.job.company || !data.job.position) && !data.job.isDraft) return badRequest("请填写公司名称和岗位名称");
     const db = getDb(), now = new Date().toISOString();
+    data.application = await resolveResumeSelection(db, data.application);
     const job = { ...data.job, id: crypto.randomUUID(), importBatchId: null, createdAt: now, updatedAt: now };
     await db.insert(jobs).values(job);
     let application: typeof jobApplications.$inferSelect | null = null;
@@ -105,6 +129,7 @@ export async function PUT(request: NextRequest) {
     const data = normalize(body);
     if ((!data.job.company || !data.job.position) && !data.job.isDraft) return badRequest("请填写公司名称和岗位名称");
     const db = getDb(), now = new Date().toISOString();
+    data.application = await resolveResumeSelection(db, data.application);
     await db.update(jobs).set({ ...data.job, updatedAt: now }).where(eq(jobs.id, id));
     const existing = await db.select().from(jobApplications).where(eq(jobApplications.jobId, id)).limit(1);
     let application: typeof jobApplications.$inferSelect | null = null;

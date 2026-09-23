@@ -8,6 +8,7 @@ export type ApplicationRecord = {
   resumeVersion: string; notes: string; companyIntro: string; interviewExperience: string;
   writtenTestMaterials: string; commonQuestions: string; preparationNotes: string;
   createdAt: string; updatedAt: string; applicationId?: string; isDraft?: boolean; resumeVersionId?: string;
+  resumeSourceType?: "base" | "version" | "";
   tags?: string; sourceJobId?: string; publishedDate?: string; rawText?: string;
 };
 

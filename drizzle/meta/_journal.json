@@ -29,6 +29,13 @@
       "when": 1790155824420,
       "tag": "0003_job_discovery",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1790170225080,
+      "tag": "0004_dark_power_man",
+      "breakpoints": true
     }
   ]
 }
