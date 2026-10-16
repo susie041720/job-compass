@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { baseResumes, discoveryPreferences, jobApplications, resumeVersions } from "@/db/schema";
-import { blockPublicDemoMutation } from "@/lib/public-demo";
+import { blockPublicDemoMutation, isPublicDemoMode } from "@/lib/public-demo";
+import { PUBLIC_DEMO_RESUMES } from "@/lib/public-demo-data";
 
 const clean = (value: unknown) => typeof value === "string" ? value.trim() : "";
 
@@ -23,6 +24,11 @@ function originalFileResponse(row: typeof baseResumes.$inferSelect) {
 }
 
 export async function GET(request: NextRequest) {
+  if (isPublicDemoMode()) {
+    const url = new URL(request.url);
+    if (url.searchParams.get("file") === "original") return NextResponse.json({ error: "公开演示版没有真实简历文件" }, { status: 404 });
+    return NextResponse.json(PUBLIC_DEMO_RESUMES);
+  }
   try {
     const url = new URL(request.url), id = url.searchParams.get("id"), file = url.searchParams.get("file");
     if (id && file === "original") {

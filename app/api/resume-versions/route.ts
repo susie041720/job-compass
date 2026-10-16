@@ -2,11 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { jobApplications, resumeVersions } from "@/db/schema";
-import { blockPublicDemoMutation } from "@/lib/public-demo";
+import { blockPublicDemoMutation, isPublicDemoMode } from "@/lib/public-demo";
+import { PUBLIC_DEMO_RESUME_VERSIONS } from "@/lib/public-demo-data";
 
 const clean = (value: unknown) => typeof value === "string" ? value.trim() : "";
 
 export async function GET(request: NextRequest) {
+  if (isPublicDemoMode()) {
+    const jobId = new URL(request.url).searchParams.get("jobId");
+    return NextResponse.json(jobId ? PUBLIC_DEMO_RESUME_VERSIONS.filter((item) => item.jobId === jobId) : PUBLIC_DEMO_RESUME_VERSIONS);
+  }
   try {
     const jobId = new URL(request.url).searchParams.get("jobId");
     const query = getDb().select().from(resumeVersions);

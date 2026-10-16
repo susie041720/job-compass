@@ -97,7 +97,7 @@ export async function POST(request: NextRequest) {
           result = "merged";
         } else {
           jobId = crypto.randomUUID();
-          const created = { ...jobValues, id: jobId, importBatchId: batchId, createdAt: now };
+          const created = { ...jobValues, assessmentHistory: "[]", id: jobId, importBatchId: batchId, createdAt: now };
           await db.insert(jobs).values(created);
           currentJobs.push(created);
           if (status !== "待投递") await db.insert(jobApplications).values({ id: crypto.randomUUID(), jobId, appliedDate: clean(row.appliedDate), channel: clean(row.channel), status, resumeVersionId: null, legacyResumeLabel: "", notes: "", createdAt: now, updatedAt: now });

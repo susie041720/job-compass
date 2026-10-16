@@ -4,7 +4,10 @@ import { getDb } from "@/db";
 import { applications as legacyApplications, baseResumes, jobApplications, jobs, resumeVersions } from "@/db/schema";
 import { STATUSES } from "@/lib/application";
 import { normalizeUrl } from "@/lib/job-import";
-import { blockPublicDemoMutation } from "@/lib/public-demo";
+import { blockPublicDemoMutation, isPublicDemoMode } from "@/lib/public-demo";
+import { clonePublicDemoApplications } from "@/lib/public-demo-data";
+
+import { readAssessments, validateAssessments } from "@/lib/assessments";
 
 const badRequest = (message: string) => NextResponse.json({ error: message }, { status: 400 });
 const clean = (value: unknown) => typeof value === "string" ? value.trim() : "";
@@ -15,6 +18,7 @@ function normalize(body: Record<string, unknown>) {
   const company = clean(body.company), position = clean(body.position);
   return {
     job: {
+      assessmentHistory: JSON.stringify(validateAssessments(body.assessments ?? [])),
       company, position, department: clean(body.department), category: clean(body.category) || "其他", location: clean(body.location),
       recruitmentType: clean(body.recruitmentType) || "校招", description: clean(body.description),
       requirements: clean(body.requirements), jobUrl: clean(body.jobUrl), normalizedUrl: normalizeUrl(clean(body.jobUrl)),
@@ -58,6 +62,7 @@ async function resolveResumeSelection(db: ReturnType<typeof getDb>, application:
 type Joined = { job: typeof jobs.$inferSelect; application: typeof jobApplications.$inferSelect | null };
 function combine({ job: j, application: a }: Joined) {
   return {
+    assessments: readAssessments(j.assessmentHistory),
     id: j.id, applicationId: a?.id, company: j.company, position: j.position, department: j.department, category: j.category,
     location: j.location, recruitmentType: j.recruitmentType, description: j.description,
     requirements: j.requirements, jobUrl: j.jobUrl, source: j.source, sourceJobId: j.sourceJobId,
@@ -92,6 +97,7 @@ async function ensureLegacyData() {
 }
 
 export async function GET() {
+  if (isPublicDemoMode()) return NextResponse.json(clonePublicDemoApplications());
   try {
     await ensureLegacyData();
     const rows = await getDb().select({ job: jobs, application: jobApplications }).from(jobs)
@@ -134,6 +140,9 @@ export async function PUT(request: NextRequest) {
     const data = normalize(body);
     if ((!data.job.company || !data.job.position) && !data.job.isDraft) return badRequest("请填写公司名称和岗位名称");
     const db = getDb(), now = new Date().toISOString();
+    const original = await db.select().from(jobs).where(eq(jobs.id, id)).limit(1);
+    if (!original[0]) return NextResponse.json({ error: "岗位不存在" }, { status: 404 });
+    if (body.assessments === undefined) data.job.assessmentHistory = original[0].assessmentHistory;
     data.application = await resolveResumeSelection(db, data.application);
     await db.update(jobs).set({ ...data.job, updatedAt: now }).where(eq(jobs.id, id));
     const existing = await db.select().from(jobApplications).where(eq(jobApplications.jobId, id)).limit(1);

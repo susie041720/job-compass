@@ -1,7 +1,7 @@
 /* eslint-disable react-hooks/set-state-in-effect, @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Download, Eye, FileText, Loader2, ShieldCheck, Sparkles, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -13,6 +13,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ApplicationRecord } from "@/lib/application";
+import { PUBLIC_DEMO_RESUMES, PUBLIC_DEMO_RESUME_VERSIONS } from "@/lib/public-demo-data";
+
+import { formatPdfText, pdfTextWarning } from "@/lib/pdf-text";
 
 type BaseResume = { id: string; name: string; language: string; originalFileName: string; originalMime: string; extractedText: string; confirmedContent: string; createdAt: string; updatedAt: string; versionCount: number; applicationCount: number };
 type Suggestion = { id?: string; original?: string; revised?: string; why?: string; requirement?: string; evidence?: string; accepted?: boolean };
@@ -36,14 +39,27 @@ async function extractFile(file: File) {
   }
   if (/\.pdf$/i.test(file.name)) {
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-    const document = await pdfjs.getDocument({ data: new Uint8Array(buffer.slice(0)) }).promise;
-    const pages: string[] = [];
-    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber++) {
-      const page = await document.getPage(pageNumber), content = await page.getTextContent();
-      pages.push(content.items.map((item) => "str" in item ? item.str : "").join(" "));
+    pdfjs.GlobalWorkerOptions.workerSrc = "/pdfjs/pdf.worker.min.mjs";
+    const task = pdfjs.getDocument({
+      data: new Uint8Array(buffer.slice(0)),
+      cMapUrl: "/pdfjs/cmaps/",
+      cMapPacked: true,
+      standardFontDataUrl: "/pdfjs/standard_fonts/",
+      wasmUrl: "/pdfjs/wasm/",
+    });
+    try {
+      const document = await task.promise;
+      const pages: string[] = [];
+      for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber++) {
+        const page = await document.getPage(pageNumber);
+        const content = await page.getTextContent();
+        pages.push(formatPdfText(content.items));
+        page.cleanup();
+      }
+      return { text: pages.join("\n\n").trim(), data: originalData };
+    } finally {
+      await task.destroy();
     }
-    return { text: pages.join("\n\n").trim(), data: originalData };
   }
   throw new Error("仅支持 PDF 或 DOCX 基础简历");
 }
@@ -56,8 +72,16 @@ export function ResumeStudio({ jobs, initialJob, onInitialJobHandled, onUseVersi
   const [previewBase, setPreviewBase] = useState<BaseResume | null>(null), [previewVersion, setPreviewVersion] = useState<Version | null>(null);
   const [deleting, setDeleting] = useState<{ kind: "base" | "version"; id: string; title: string; usageCount: number; versionCount: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const load = async () => { try { const [baseData, versionData] = await Promise.all([json("/api/resumes"), json("/api/resume-versions")]); setBases(baseData); setVersions(versionData); } catch (error) { setNotice(error instanceof Error ? error.message : "读取简历失败"); } };
-  useEffect(() => { load(); }, []);
+  const load = useCallback(async () => {
+    if (readOnly) {
+      setBases(PUBLIC_DEMO_RESUMES);
+      setVersions(PUBLIC_DEMO_RESUME_VERSIONS);
+      return;
+    }
+    try { const [baseData, versionData] = await Promise.all([json("/api/resumes"), json("/api/resume-versions")]); setBases(baseData); setVersions(versionData); }
+    catch (error) { setNotice(error instanceof Error ? error.message : "读取简历失败"); }
+  }, [readOnly]);
+  useEffect(() => { load(); }, [load]);
   useEffect(() => { if (initialJob) { setJobId(initialJob.id); setOptimizer(true); setAnalysis(null); setDraft(""); onInitialJobHandled(); } }, [initialJob, onInitialJobHandled]);
   useEffect(() => { if (!baseId && bases[0]) setBaseId(bases[0].id); }, [bases, baseId]);
   const job = useMemo(() => jobs.find((item) => item.id === jobId), [jobs, jobId]);
@@ -65,7 +89,7 @@ export function ResumeStudio({ jobs, initialJob, onInitialJobHandled, onUseVersi
 
   const selectFile = async (file?: File) => {
     if (!file) return; setBusy(true); setNotice("正在本地解析简历…");
-    try { const extracted = await extractFile(file); if (!extracted.text) throw new Error("没有读取到文字，请换用可选择文字的 PDF 或 DOCX"); setReview({ file, text: extracted.text, data: extracted.data, name: file.name.replace(/\.(pdf|docx)$/i, ""), language: "中文" }); setNotice(""); }
+    try { const extracted = await extractFile(file); setReview({ file, text: extracted.text, data: extracted.data, name: file.name.replace(/\.(pdf|docx)$/i, ""), language: "中文" }); setNotice(""); }
     catch (error) { setNotice(error instanceof Error ? error.message : "简历解析失败"); }
     finally { setBusy(false); if (fileRef.current) fileRef.current.value = ""; }
   };
@@ -116,14 +140,14 @@ export function ResumeStudio({ jobs, initialJob, onInitialJobHandled, onUseVersi
     finally { setBusy(false); }
   };
 
-  return <div><div className="mb-6 flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-bold tracking-[.16em] text-[#0f8b7c]">RESUME STUDIO</p><h1 className="mt-1 text-3xl font-bold tracking-tight">简历工作台</h1><p className="mt-1 text-sm text-slate-500">基础简历保留真实经历，岗位版本独立保存并可回溯</p></div><div><input ref={fileRef} type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" className="hidden" onChange={(event) => selectFile(event.target.files?.[0])}/><Button variant="outline" disabled={readOnly} onClick={() => fileRef.current?.click()}><Upload/>{readOnly?"展示版不接收文件":"上传基础简历"}</Button></div></div>
+  return <div><div className="mb-6 flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-bold tracking-[.16em] text-[#0f8b7c]">RESUME STUDIO</p><h1 className="mt-1 text-3xl font-bold tracking-tight">简历工作台</h1><p className="mt-1 text-sm text-slate-500">基础简历保留真实经历，岗位版本独立保存并可回溯</p></div><div><input ref={fileRef} type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" className="hidden" onChange={(event) => selectFile(event.target.files?.[0])}/><Button variant="outline" disabled={readOnly} onClick={() => fileRef.current?.click()}><Upload/>{readOnly?"展示版不接收文件":"上传基础简历"}</Button></div></div>{readOnly&&<div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950"><b>示例体验：</b>下方简历、JD 和修改建议均为虚构预设内容，用于展示审核与版本回溯流程。公开演示不会上传文件、调用外部 AI 或长期保存简历。</div>}
     {notice && <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">{notice}</div>}
     <Tabs defaultValue="bases"><TabsList><TabsTrigger value="bases">基础简历 / 真实经历库</TabsTrigger><TabsTrigger value="versions">岗位定制版本</TabsTrigger></TabsList><TabsContent value="bases" className="pt-4"><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{bases.map((item) => <article key={item.id} className="flex flex-col rounded-2xl border bg-white p-5"><div className="flex items-start justify-between"><FileText className="text-[#08796b]"/><span className="text-xs text-slate-400">{item.language}</span></div><h2 className="mt-4 font-semibold">{item.name}</h2><p className="mt-1 text-sm text-slate-500">原文件：{item.originalFileName||"公开示例文本"}</p><p className="mt-2 text-xs text-slate-400">{item.versionCount} 个定制版本 · {item.applicationCount} 条投递正在使用</p><p className="mt-3 line-clamp-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{item.confirmedContent}</p><div className="mt-auto flex flex-wrap gap-2 pt-4"><Button size="sm" variant="outline" onClick={() => setPreviewBase(item)}><Eye/>查看</Button>{item.originalFileName&&<Button size="sm" variant="outline" onClick={() => openOriginal(item)}><Download/>{item.originalMime.includes("pdf")?"原文件":"下载原文件"}</Button>}{!readOnly&&<Button size="sm" variant="ghost" onClick={() => setDeleting({ kind: "base", id: item.id, title: item.name, usageCount: item.applicationCount, versionCount: item.versionCount })}><Trash2 className="text-rose-500"/>删除</Button>}</div></article>)}{!bases.length && <Empty text="先上传 PDF 或 DOCX，并检查解析结果。没有基础简历时，AI 不会自行生成经历。"/>}</div></TabsContent>
       <TabsContent value="versions" className="pt-4"><div className="mb-4 flex justify-end"><Button disabled={readOnly || !bases.length || !jobs.length} onClick={() => { setOptimizer(true); setJobId(jobs[0]?.id || ""); }}><Sparkles/>{readOnly?"展示版不调用 AI":"针对岗位创建版本"}</Button></div><div className="grid gap-4 lg:grid-cols-2">{versions.map((version) => { const target = jobs.find((item) => item.id === version.jobId); return <article key={version.id} className="rounded-2xl border bg-white p-5"><div className="flex flex-wrap items-start justify-between gap-2"><div><h2 className="font-semibold">{version.title}</h2><p className="text-sm text-slate-500">{target ? `${target.company} · ${target.position}` : "通用方向版本"} · {version.intensity}</p></div><span className="rounded-full bg-amber-50 px-3 py-1 text-xs text-amber-700">{version.status}</span></div><p className="mt-4 line-clamp-4 whitespace-pre-wrap text-sm leading-6 text-slate-600">{version.content}</p><div className="mt-4 flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => setPreviewVersion(version)}><Eye/>查看</Button><Button size="sm" variant="outline" onClick={() => exportDocx(version)}><Download/>DOCX</Button><Button size="sm" variant="outline" onClick={() => exportPdf(version)}><Download/>PDF</Button>{!readOnly&&target?.applicationId && <Button size="sm" onClick={() => onUseVersion(target, version)}><Check/>设为本次投递版本</Button>}{!readOnly&&<Button size="sm" variant="ghost" onClick={() => setDeleting({ kind: "version", id: version.id, title: version.title, usageCount: version.usageCount, versionCount: 0 })}><Trash2 className="text-rose-500"/>删除</Button>}</div></article>; })}{!versions.length && <Empty text="选择一条岗位，生成或手动整理一份独立版本。生成后不会自动标记为已投递。"/>}</div></TabsContent></Tabs>
     <Dialog open={!!previewBase} onOpenChange={(open) => !open && setPreviewBase(null)}><DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-4xl"><DialogHeader><DialogTitle>{previewBase?.name}</DialogTitle><DialogDescription>{previewBase?.originalFileName || "基础简历"} · {previewBase?.language} · 更新于 {previewBase?.updatedAt.slice(0,10)}</DialogDescription></DialogHeader><pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-2xl border bg-slate-50 p-5 text-sm leading-7">{previewBase?.confirmedContent}</pre>{previewBase?.originalFileName&&<div className="flex justify-end"><Button variant="outline" onClick={() => previewBase && openOriginal(previewBase)}><Download/>{previewBase.originalMime.includes("pdf")?"打开 PDF 原文件":"下载 DOCX 原文件"}</Button></div>}</DialogContent></Dialog>
     <Dialog open={!!previewVersion} onOpenChange={(open) => !open && setPreviewVersion(null)}><DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-4xl"><DialogHeader><DialogTitle>{previewVersion?.title}</DialogTitle><DialogDescription>{previewVersion?.intensity} · {previewVersion?.language} · 更新于 {previewVersion?.updatedAt.slice(0,10)}</DialogDescription></DialogHeader><pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-2xl border bg-slate-50 p-5 text-sm leading-7">{previewVersion?.content}</pre></DialogContent></Dialog>
     <AlertDialog open={!!deleting} onOpenChange={(open) => !open && setDeleting(null)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{deleting?.usageCount ? "暂时不能删除这份简历" : "删除这份简历？"}</AlertDialogTitle><AlertDialogDescription>{deleting?.usageCount ? `“${deleting.title}”正被 ${deleting.usageCount} 条投递记录使用。请先在对应投递记录中更换或取消关联，再回来删除。` : deleting?.kind === "base" && deleting.versionCount ? `删除“${deleting.title}”也会删除由它生成的 ${deleting.versionCount} 个未使用定制版本。此操作无法撤销。` : `“${deleting?.title}”将被永久删除，此操作无法撤销。`}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>{deleting?.usageCount ? "知道了" : "取消"}</AlertDialogCancel>{!deleting?.usageCount&&<AlertDialogAction disabled={busy} onClick={removeResume} className="bg-rose-600 hover:bg-rose-700">{busy?"删除中…":"确认删除"}</AlertDialogAction>}</AlertDialogFooter></AlertDialogContent></AlertDialog>
-    <Dialog open={!!review} onOpenChange={(value) => !value && setReview(null)}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>检查基础简历解析结果</DialogTitle><DialogDescription>原文件会保留；请先修正解析错位，再确认进入真实经历库。</DialogDescription></DialogHeader>{review && <div className="space-y-4"><div className="grid gap-4 sm:grid-cols-2"><div><Label>版本名称</Label><Input className="mt-1.5" value={review.name} onChange={(event) => setReview({ ...review, name: event.target.value })}/></div><div><Label>语言</Label><Select value={review.language} onValueChange={(value) => setReview({ ...review, language: value })}><SelectTrigger className="mt-1.5 w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="中文">中文</SelectItem><SelectItem value="英文">英文</SelectItem></SelectContent></Select></div></div><Textarea value={review.text} onChange={(event) => setReview({ ...review, text: event.target.value })} className="min-h-[420px] font-mono text-sm"/><div className="flex justify-end"><Button disabled={busy || !review.text.trim()} onClick={saveBase}>{busy ? <Loader2 className="animate-spin"/> : <ShieldCheck/>}确认并保存基础简历</Button></div></div>}</DialogContent></Dialog>
+    <Dialog open={!!review} onOpenChange={(value) => !value && setReview(null)}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>检查基础简历解析结果</DialogTitle><DialogDescription>原文件会保留；请先修正解析错位，再确认进入真实经历库。</DialogDescription></DialogHeader>{review && <div className="space-y-4"><div className="grid gap-4 sm:grid-cols-2"><div><Label>版本名称</Label><Input className="mt-1.5" value={review.name} onChange={(event) => setReview({ ...review, name: event.target.value })}/></div><div><Label>语言</Label><Select value={review.language} onValueChange={(value) => setReview({ ...review, language: value })}><SelectTrigger className="mt-1.5 w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="中文">中文</SelectItem><SelectItem value="英文">英文</SelectItem></SelectContent></Select></div></div>{/\.pdf$/i.test(review.file.name) && pdfTextWarning(review.text) && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{pdfTextWarning(review.text)}</p>}<p className="text-sm text-slate-500">这里显示提取后的正文，不保留 PDF 原排版。请核对文字及顺序；扫描件暂不支持自动 OCR，可在下方粘贴正确正文。</p><Textarea value={review.text} onChange={(event) => setReview({ ...review, text: event.target.value })} className="min-h-[420px] font-mono text-sm"/><div className="flex justify-end"><Button disabled={busy || !review.text.trim()} onClick={saveBase}>{busy ? <Loader2 className="animate-spin"/> : <ShieldCheck/>}确认并保存基础简历</Button></div></div>}</DialogContent></Dialog>
     <Dialog open={optimizer} onOpenChange={setOptimizer}><DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-[1100px]"><DialogHeader><DialogTitle>针对岗位优化简历</DialogTitle><DialogDescription>AI 建议与原简历分开显示。所有改动都需要你审核后才会保存。</DialogDescription></DialogHeader><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><div><Label>基础简历</Label><Select value={baseId} onValueChange={setBaseId}><SelectTrigger className="mt-1.5 w-full"><SelectValue placeholder="选择基础简历"/></SelectTrigger><SelectContent>{bases.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></div><div><Label>目标岗位</Label><Select value={jobId} onValueChange={setJobId}><SelectTrigger className="mt-1.5 w-full"><SelectValue placeholder="选择岗位"/></SelectTrigger><SelectContent>{jobs.filter((item) => !item.isDraft).map((item) => <SelectItem key={item.id} value={item.id}>{item.company} · {item.position}</SelectItem>)}</SelectContent></Select></div><div><Label>调整程度</Label><Select value={intensity} onValueChange={setIntensity}><SelectTrigger className="mt-1.5 w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="轻度润色">轻度润色</SelectItem><SelectItem value="结构调整">结构调整</SelectItem></SelectContent></Select></div><div><Label>输出语言</Label><Select value={language} onValueChange={setLanguage}><SelectTrigger className="mt-1.5 w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="中文">中文</SelectItem><SelectItem value="英文">英文</SelectItem></SelectContent></Select></div></div>
       <label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm"><Checkbox checked={consent} onCheckedChange={(value) => setConsent(Boolean(value))}/><span>我同意把去除手机号、邮箱和住址后的简历正文，以及目标岗位 JD，发送给已配置的外部 AI 服务。本次点击只调用一次，失败时不会自动重复扣费。</span></label><div className="flex justify-end"><Button disabled={busy || !job || !base || !consent || !(job.description || job.requirements)} onClick={optimize}>{busy ? <Loader2 className="animate-spin"/> : <Sparkles/>}开始分析</Button></div>
       {(analysis || draft) && <div className="space-y-5"><section className="rounded-2xl border p-4"><h3 className="font-semibold">匹配依据清单</h3>{analysis ? <div className="mt-3 grid gap-2">{analysis.evidence.map((item, index) => <div key={index} className="grid gap-2 rounded-xl bg-slate-50 p-3 text-sm md:grid-cols-[180px_130px_1fr]"><b>{item.requirement}</b><span className={item.level === "有经历支撑" ? "text-emerald-700" : item.level === "暂无证据" ? "text-rose-700" : "text-amber-700"}>{item.level}</span><span className="text-slate-600">{item.resumeEvidence || "未找到依据"}</span></div>)}</div> : <p className="mt-2 text-sm text-amber-700">AI 暂不可用，你仍可在右侧基于真实内容手动调整。</p>}</section>

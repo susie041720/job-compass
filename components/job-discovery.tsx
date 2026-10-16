@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/set-state-in-effect */
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bookmark, BriefcaseBusiness, Building2, CalendarDays, ExternalLink, FileUp, MapPin, RefreshCw, Search, Settings2, Sparkles, ThumbsDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -11,8 +11,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { parseCsv } from "@/lib/csv";
-import { DiscoveryJobInput, DiscoveryPreferences, MatchResult } from "@/lib/job-discovery";
+import { calculateDiscoveryMatch, DiscoveryJobInput, DiscoveryPreferences, MatchResult } from "@/lib/job-discovery";
+import { AUTOMATIC_SOURCES, COMPANY_DIRECTORY } from "@/lib/discovery-catalog";
+import { nextDiscoveryBatch, recommendable } from "@/lib/discovery-batch";
 import { parseJobText } from "@/lib/job-import";
+import { PUBLIC_DEMO_DISCOVERY_JOBS, PUBLIC_DEMO_DISCOVERY_PREFERENCES, PUBLIC_DEMO_RESUMES } from "@/lib/public-demo-data";
 
 type ResumeOption = { id: string; name: string; updatedAt: string };
 type DiscoveryJob = Required<Pick<DiscoveryJobInput, "id">> & DiscoveryJobInput & {
@@ -36,14 +39,62 @@ export function JobDiscovery({ onApplicationCreated, readOnly = false }: { onApp
   const [dismissing, setDismissing] = useState<DiscoveryJob | null>(null), [dismissReason, setDismissReason] = useState("地点不符");
   const [applying, setApplying] = useState<DiscoveryJob | null>(null), [application, setApplication] = useState({ appliedDate: "", channel: "公司官网", notes: "" }), [busy, setBusy] = useState(false), [refreshing, setRefreshing] = useState(false);
 
-  const load = async () => {
+  const [searching, setSearching] = useState(false), [seenIds, setSeenIds] = useState<Set<string>>(new Set());
+  const [sourceResults, setSourceResults] = useState<Array<{company:string;scanned:number;matched:number;added:number;updated:number;closed:number;failed:number;error:string}>>([]);
+  const searchLock = useRef(false);
+  useEffect(() => {
+    try {const saved=JSON.parse(localStorage.getItem('discovery-batches-v1') || '[]');if(Array.isArray(saved)) setSeenIds(new Set(saved.filter(x=>typeof x==='string')));} catch { /* Optional browsing history. */ }
+  }, []);
+  const rememberBatch = (ids: Set<string>) => {
+    setSeenIds(ids);
+    try {localStorage.setItem('discovery-batches-v1',JSON.stringify([...ids].slice(-10000)));} catch {setNotice('当前浏览器无法保存换批历史，刷新后可能重新显示浏览过的岗位');}
+  };
+  const searchNewJobs = async () => {
+    if (searchLock.current) return;
+    searchLock.current=true;setSearching(true);
+    try {
+      const data=await json('/api/discovery/search',{method:'POST'});
+      setSourceResults(data.sources);await load();
+      setNotice(`获取完成：新增 ${data.imported} 个实习岗位，更新 ${data.updated} 个。没有新增时不会用旧岗位冒充新岗位；各公司结果见下方。`);
+    } catch(error) {setNotice(error instanceof Error ? error.message : '获取失败，请稍后重试');}
+    finally {setSearching(false);searchLock.current=false;}
+  };
+  const load = useCallback(async () => {
+    if (readOnly) {
+      const preferences = PUBLIC_DEMO_DISCOVERY_PREFERENCES as DiscoveryPreferences;
+      const timestamp = "2026-10-15T08:00:00.000Z";
+      const demoJobs = PUBLIC_DEMO_DISCOVERY_JOBS.map((job) => ({
+        ...job,
+        normalizedUrl: job.jobUrl,
+        firstSeenAt: timestamp,
+        lastSeenAt: timestamp,
+        fetchedAt: timestamp,
+        sourceUpdatedAt: job.publishedDate ? `${job.publishedDate}T08:00:00.000Z` : "",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        isDismissed: false,
+        dismissReason: "",
+        viewCount: 0,
+        outboundCount: 0,
+        lastViewedAt: "",
+        lastOutboundAt: "",
+        isApplied: false,
+        canonicalJobId: "",
+        match: calculateDiscoveryMatch(job, preferences, PUBLIC_DEMO_RESUMES[0].confirmedContent, "", new Date("2026-10-16T00:00:00.000Z")),
+      })) as DiscoveryJob[];
+      setJobs(demoJobs);
+      setPreferences(preferences);
+      setResumes([{ id: "demo-resume", name: "公开演示基础简历（虚构）", updatedAt: "2026-10-12T09:00:00.000Z" }]);
+      setLoading(false);
+      return;
+    }
     try {
       const [jobData, preferenceData] = await Promise.all([json("/api/discovery/jobs"), json("/api/discovery/preferences")]);
       setJobs(jobData.jobs); setPreferences(preferenceData.preferences); setResumes(preferenceData.resumes);
     } catch (error) { setNotice(error instanceof Error ? error.message : "岗位发现暂时不可用"); }
     finally { setLoading(false); }
-  };
-  useEffect(() => { load(); }, []);
+  }, [readOnly]);
+  useEffect(() => { load(); }, [load]);
 
   const companies = [...new Set(jobs.map((item) => item.company).filter((value): value is string => Boolean(value)))];
   const categories = [...new Set(jobs.map((item) => item.category).filter((value): value is string => Boolean(value)))];
@@ -54,9 +105,17 @@ export function JobDiscovery({ onApplicationCreated, readOnly = false }: { onApp
     if (!matchesSearch || (company !== "__all" && item.company !== company) || (category !== "__all" && item.category !== category) || (city !== "__all" && item.location !== city) || (recruitment !== "__all" && item.recruitmentType !== recruitment) || item.match.score < Number(minimumScore)) return false;
     if (tab === "favorites") return item.isFavorite;
     if (tab === "latest") return !item.isDismissed;
-    if (tab === "similar") return !item.isDismissed && item.match.eligible && (!favoriteCategories.size || favoriteCategories.has(item.category));
-    return !item.isDismissed && item.match.eligible;
+    if (tab === "similar") return recommendable(item) && item.match.eligible && (!favoriteCategories.size || favoriteCategories.has(item.category));
+    return recommendable(item) && item.match.eligible;
   }).sort((a, b) => tab === "latest" ? (b.publishedDate || b.firstSeenAt).localeCompare(a.publishedDate || a.firstSeenAt) : b.match.score - a.match.score); }, [jobs, query, company, category, city, recruitment, minimumScore, tab]);
+
+  const batching = tab === 'recommended' || tab === 'similar';
+  const displayed = batching ? nextDiscoveryBatch(filtered,seenIds) : filtered;
+  const nextBatch = () => {
+    const next=new Set([...seenIds,...displayed.map(job=>job.id)]);
+    rememberBatch(next);
+    setNotice(nextDiscoveryBatch(filtered,next).length ? '已换一批，之前的岗位仍在“最新岗位”中。' : '当前条件下的候选已看完。请点击“获取新岗位”，或调整筛选；不会自动重复展示旧岗位。');
+  };
 
   const action = async (job: DiscoveryJob, name: string, extra: Record<string, unknown> = {}) => {
     if (readOnly) {
@@ -82,6 +141,7 @@ export function JobDiscovery({ onApplicationCreated, readOnly = false }: { onApp
   const openDetail = (job: DiscoveryJob) => { setDetail(job); action(job, "view").catch(() => setNotice("详情已打开，但查看记录暂未保存")); };
   const openOfficial = (job: DiscoveryJob) => {
     if (!job.jobUrl) return setNotice("该岗位没有可用的官方链接，请在详情中补充来源");
+    if (readOnly) return setNotice("这是虚构岗位的示例链接，不会跳转到真实招聘页面。公开演示版没有实时抓取岗位。");
     window.open(job.jobUrl, "_blank", "noopener,noreferrer");
     action(job, "outbound").then(() => setNotice(readOnly?"已打开官网；公开展示版不会记录本次跳转":"已打开官网。返回后请手动确认是否完成投递。"), () => setNotice("官网已打开，但跳转记录暂未保存"));
   };
@@ -91,7 +151,7 @@ export function JobDiscovery({ onApplicationCreated, readOnly = false }: { onApp
     catch (error) { setNotice(error instanceof Error ? error.message : "确认投递失败"); }
     finally { setBusy(false); }
   };
-  const dismiss = async () => { if (!dismissing) return; try { await action(dismissing, "dismiss", { reason: dismissReason }); setDismissing(null); setNotice("已记录原因，后续推荐会降低类似岗位的权重"); } catch (error) { setNotice(error instanceof Error ? error.message : "操作失败"); } };
+  const dismiss = async () => { if (!dismissing) return; try { await action(dismissing, "dismiss", { reason: dismissReason }); setDismissing(null); setNotice("已记录原因，该岗位不再出现在推荐中"); } catch (error) { setNotice(error instanceof Error ? error.message : "操作失败"); } };
   const refreshOfficial = async () => {
     setRefreshing(true);
     try {
@@ -103,27 +163,36 @@ export function JobDiscovery({ onApplicationCreated, readOnly = false }: { onApp
   };
 
   return <div>
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-bold tracking-[.16em] text-[#0f8b7c]">JOB DISCOVERY</p><h1 className="mt-1 text-3xl font-bold tracking-tight">岗位发现</h1><p className="mt-1 text-sm text-slate-500">从候选岗位中筛出更适合你的实习机会；跳转官网不会自动标记为已投递</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={readOnly||refreshing} onClick={refreshOfficial}><RefreshCw className={refreshing ? "animate-spin" : ""}/>{refreshing ? "正在更新" : "更新官网状态"}</Button><Button variant="outline" disabled={readOnly} onClick={() => setPreferenceOpen(true)}><Settings2/>求职偏好</Button><Button disabled={readOnly} onClick={() => setImportOpen(true)}><FileUp/>{readOnly?"展示版不接收资料":"导入候选岗位"}</Button></div></div>
+    <div className="mb-6 flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-bold tracking-[.16em] text-[#0f8b7c]">JOB DISCOVERY</p><h1 className="mt-1 text-3xl font-bold tracking-tight">岗位发现</h1><p className="mt-1 text-sm text-slate-500">从候选岗位中筛出更适合你的实习机会；跳转官网不会自动标记为已投递</p></div><div className="flex flex-wrap gap-2"><Button disabled={readOnly||searching} onClick={searchNewJobs}><RefreshCw className={searching ? "animate-spin" : ""}/>{searching ? "正在获取公开岗位…" : "获取新岗位"}</Button><Button variant="outline" disabled={readOnly||refreshing} onClick={refreshOfficial}><RefreshCw className={refreshing ? "animate-spin" : ""}/>{refreshing ? "正在更新" : "更新官网状态"}</Button><Button variant="outline" disabled={readOnly} onClick={() => setPreferenceOpen(true)}><Settings2/>求职偏好</Button><Button disabled={readOnly} onClick={() => setImportOpen(true)}><FileUp/>{readOnly?"展示版不接收资料":"导入候选岗位"}</Button></div></div>
+    {readOnly?<div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950"><b>示例岗位库：</b>当前公司、岗位、发布时间和链接均为虚构数据；匹配分由浏览器中的本地规则计算。公开演示不会实时抓取招聘网站，也不会把“示例来源”伪装成正在招聘。</div>:<details className="mb-5 rounded-xl border bg-white p-4"><summary className="cursor-pointer font-semibold">公司来源 · {AUTOMATIC_SOURCES.length} 个自动来源 / {COMPANY_DIRECTORY.length} 个官网入口</summary><p className="my-3 text-sm text-slate-500">自动来源仅获取公开实习岗位，按求职偏好的城市筛选并按匹配度排序。官网入口不代表已接通自动抓取；受限页面请用“导入候选岗位”粘贴 JD 或表格。</p><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{AUTOMATIC_SOURCES.map(source=><a key={source.id} href={source.url} target="_blank" rel="noreferrer" className="rounded-lg border p-3 text-sm"><strong>{source.company}</strong><p className="mt-1 text-teal-700">公开列表自动获取 · 可前往官网</p></a>)}{COMPANY_DIRECTORY.map(source=><a key={source.company} href={source.url} target="_blank" rel="noreferrer" className="rounded-lg border p-3 text-sm"><strong>{source.company}</strong><p className="mt-1 text-slate-500">{source.note}</p></a>)}</div></details>}
+    {sourceResults.length>0&&<div className="mb-5 rounded-xl border bg-white p-4 text-sm" aria-live="polite"><p className="mb-2 font-semibold">本次官网获取结果</p>{sourceResults.map(result=><p key={result.company} className="mb-1">{result.company}：{result.error || `检查 ${result.scanned} 个岗位，符合城市与实习类型 ${result.matched} 个，新增 ${result.added} 个，更新 ${result.updated} 个，${result.closed} 个可能已关闭`}{result.failed>0?`；${result.failed} 条解析或保存失败，可稍后重试`:''}</p>)}</div>}
     {notice && <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">{notice}</div>}
     <div className="mb-5 rounded-2xl border border-[#bce9e1] bg-[#e9fbf7] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-semibold text-[#07675c]">当前推荐条件</p><p className="mt-1 text-sm text-[#28796f]">{preferences ? `${joinList(preferences.priorityCities)}优先 · ${joinList(preferences.preferredCities)} · ${joinList(preferences.recruitmentTypes)} · ${preferences.graduationDate || "毕业时间待补充"}` : "正在读取…"}</p></div><span className="rounded-full bg-white px-3 py-1 text-xs text-[#08796b]">方向开放推荐，可用筛选收窄</span></div></div>
     <Tabs value={tab} onValueChange={setTab}><TabsList className="mb-4"><TabsTrigger value="recommended">为你推荐</TabsTrigger><TabsTrigger value="similar">相似岗位</TabsTrigger><TabsTrigger value="latest">最新岗位</TabsTrigger><TabsTrigger value="favorites">已收藏</TabsTrigger></TabsList></Tabs>
     <div className="mb-5 grid gap-3 rounded-2xl border bg-white p-4 sm:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_repeat(5,minmax(120px,.45fr))]"><div className="relative"><Search className="absolute left-3 top-2.5 text-slate-400" size={17}/><Input value={query} onChange={(event) => setQuery(event.target.value)} className="pl-9" placeholder="搜索公司、岗位、部门或JD"/></div><FilterSelect value={company} setValue={setCompany} all="全部公司" values={companies}/><FilterSelect value={category} setValue={setCategory} all="全部方向" values={categories}/><FilterSelect value={city} setValue={setCity} all="全部城市" values={cities}/><FilterSelect value={recruitment} setValue={setRecruitment} all="全部类型" values={recruitments}/><Select value={minimumScore} onValueChange={setMinimumScore}><SelectTrigger className="w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="0">全部匹配度</SelectItem><SelectItem value="50">50 分以上</SelectItem><SelectItem value="70">70 分以上</SelectItem><SelectItem value="85">85 分以上</SelectItem></SelectContent></Select></div>
-    {loading ? <Empty text="正在读取发现岗位…"/> : filtered.length ? <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">{filtered.map((job) => <JobCard key={job.id} job={job} open={() => openDetail(job)} favorite={() => action(job, "favorite", { value: !job.isFavorite }).catch((error) => setNotice(error.message))} dismiss={() => setDismissing(job)} official={() => openOfficial(job)}/>)}</div> : <Empty text={jobs.length ? "当前筛选条件下没有岗位。你可以调整筛选，或查看“最新岗位”和“已收藏”。" : "还没有候选岗位。先导入公开岗位资料；接入目标公司官网后，也会从这里统一查看。"}/>} 
+    {batching&&<div className="mb-4 flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-slate-500">本批 {displayed.length} 个 · 尚未浏览 {filtered.filter(job=>!seenIds.has(job.id)).length} 个 · 已排除已投递、不感兴趣及可能关闭的岗位</p><div className="flex gap-2"><Button variant="outline" disabled={!displayed.length||loading} onClick={nextBatch}>换一批岗位</Button><Button variant="ghost" disabled={!seenIds.size} onClick={()=>rememberBatch(new Set())}>重新浏览候选</Button></div></div>}
+    {loading ? <Empty text="正在读取发现岗位…"/> : displayed.length ? (
+      <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">{displayed.map((job) => <JobCard key={job.id} job={job} readOnly={readOnly} open={() => openDetail(job)} favorite={() => action(job, "favorite", { value: !job.isFavorite }).catch((error) => setNotice(error.message))} dismiss={() => setDismissing(job)} official={() => openOfficial(job)}/>)}</div>
+    ) : (
+      <Empty text={jobs.length
+        ? "本批候选已看完或没有符合筛选的岗位。点击“获取新岗位”、调整筛选或“重新浏览候选”；全部历史仍在“最新岗位”和“已收藏”。"
+        : "还没有候选岗位。点击“获取新岗位”读取公开实习机会，也可以手动导入。"}/>
+    )}
 
     <PreferenceDialog open={preferenceOpen} close={() => setPreferenceOpen(false)} value={preferences} resumes={resumes} saved={async () => { setPreferenceOpen(false); setLoading(true); await load(); setNotice("求职偏好已保存，匹配结果已重新计算"); }}/>
     <DiscoveryImportDialog open={importOpen} close={() => setImportOpen(false)} saved={async (message) => { setImportOpen(false); setLoading(true); await load(); setNotice(message); }}/>
     <JobDetail job={detail} close={() => setDetail(null)} official={() => detail && openOfficial(detail)} apply={() => { if (detail) { setApplying(detail); setApplication({ appliedDate: "", channel: "公司官网", notes: "" }); } }} readOnly={readOnly}/>
-    <Dialog open={!!dismissing} onOpenChange={(open) => !open && setDismissing(null)}><DialogContent><DialogHeader><DialogTitle>为什么不感兴趣？</DialogTitle><DialogDescription>原因只用于降低类似岗位的推荐权重，不会删除岗位。</DialogDescription></DialogHeader><Select value={dismissReason} onValueChange={setDismissReason}><SelectTrigger className="w-full"><SelectValue/></SelectTrigger><SelectContent>{["地点不符","岗位方向不符","要求不符","公司不感兴趣","到岗时间不符","其他原因"].map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setDismissing(null)}>取消</Button><Button onClick={dismiss}>确认</Button></div></DialogContent></Dialog>
+    <Dialog open={!!dismissing} onOpenChange={(open) => !open && setDismissing(null)}><DialogContent><DialogHeader><DialogTitle>为什么不感兴趣？</DialogTitle><DialogDescription>原因会随岗位保存，该岗位不再推荐，也不会删除历史。</DialogDescription></DialogHeader><Select value={dismissReason} onValueChange={setDismissReason}><SelectTrigger className="w-full"><SelectValue/></SelectTrigger><SelectContent>{["地点不符","岗位方向不符","要求不符","公司不感兴趣","到岗时间不符","其他原因"].map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setDismissing(null)}>取消</Button><Button onClick={dismiss}>确认</Button></div></DialogContent></Dialog>
     <Dialog open={!!applying} onOpenChange={(open) => !open && setApplying(null)}><DialogContent><DialogHeader><DialogTitle>确认已经投递</DialogTitle><DialogDescription>只有确认后才会加入投递管理。日期不清楚可以留空。</DialogDescription></DialogHeader><div className="space-y-4"><Field label="实际投递日期" type="date" value={application.appliedDate} onChange={(value) => setApplication({ ...application, appliedDate: value })}/><Field label="投递渠道" value={application.channel} onChange={(value) => setApplication({ ...application, channel: value })}/><div><Label>备注</Label><Textarea className="mt-1.5" value={application.notes} onChange={(event) => setApplication({ ...application, notes: event.target.value })}/></div><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setApplying(null)}>尚未投递</Button><Button disabled={busy} onClick={confirmApplication}>{busy ? "保存中…" : "确认并加入投递管理"}</Button></div></div></DialogContent></Dialog>
   </div>;
 }
 
-function JobCard({ job, open, favorite, dismiss, official }: { job: DiscoveryJob; open: () => void; favorite: () => void; dismiss: () => void; official: () => void }) {
-  return <article className="flex flex-col rounded-2xl border border-[#d9e2ee] bg-white p-5 shadow-[0_8px_30px_rgba(28,45,75,.04)]"><div className="flex items-start justify-between gap-3"><div className="flex gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#e9fbf7] text-[#08796b]"><Building2 size={20}/></span><div><h2 className="font-semibold">{job.company}</h2><p className="text-sm text-slate-500">{job.position}</p></div></div><button aria-label={job.isFavorite ? "取消收藏" : "收藏"} onClick={favorite} className={`rounded-lg p-2 ${job.isFavorite ? "bg-amber-50 text-amber-600" : "text-slate-400 hover:bg-slate-50"}`}><Bookmark size={18} fill={job.isFavorite ? "currentColor" : "none"}/></button></div><div className="mt-4 flex flex-wrap gap-2 text-xs"><span className="rounded-full bg-[#0d2547] px-3 py-1 font-semibold text-white">估算匹配 {job.match.score}</span><span className="rounded-full bg-slate-100 px-3 py-1">{job.match.confidence}</span>{job.isApplied && <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-700">已投递</span>}{job.availabilityStatus !== "active" && <span className="rounded-full bg-rose-50 px-3 py-1 text-rose-700">可能已关闭</span>}</div><div className="mt-4 grid gap-2 text-sm text-slate-600 sm:grid-cols-2"><span className="flex items-center gap-2"><MapPin size={15}/>{job.location || "地点待确认"}</span><span className="flex items-center gap-2"><BriefcaseBusiness size={15}/>{job.recruitmentType || "类型待确认"}</span><span className="flex items-center gap-2"><Building2 size={15}/>{job.department || job.category || "部门待确认"}</span><span className="flex items-center gap-2"><CalendarDays size={15}/>{job.publishedDate || "发布时间待确认"}</span></div><p className="mt-4 line-clamp-2 text-sm leading-6 text-slate-600">{job.match.reasons[0]}</p><p className="mt-3 text-xs text-slate-400">来源：{job.source || "手动导入"} · 更新于 {(job.sourceUpdatedAt || job.fetchedAt || job.updatedAt)?.slice(0, 10)}</p><div className="mt-auto flex flex-wrap gap-2 pt-5"><Button size="sm" variant="outline" onClick={open}>查看详情</Button><Button size="sm" variant="ghost" onClick={dismiss}><ThumbsDown/>不感兴趣</Button><Button size="sm" className="ml-auto" onClick={official}><ExternalLink/>前往官网</Button></div></article>;
+function JobCard({ job, open, favorite, dismiss, official, readOnly = false }: { job: DiscoveryJob; open: () => void; favorite: () => void; dismiss: () => void; official: () => void; readOnly?: boolean }) {
+  return <article className="flex flex-col rounded-2xl border border-[#d9e2ee] bg-white p-5 shadow-[0_8px_30px_rgba(28,45,75,.04)]"><div className="flex items-start justify-between gap-3"><div className="flex gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#e9fbf7] text-[#08796b]"><Building2 size={20}/></span><div><h2 className="font-semibold">{job.company}</h2><p className="text-sm text-slate-500">{job.position}</p></div></div><button aria-label={job.isFavorite ? "取消收藏" : "收藏"} onClick={favorite} className={`rounded-lg p-2 ${job.isFavorite ? "bg-amber-50 text-amber-600" : "text-slate-400 hover:bg-slate-50"}`}><Bookmark size={18} fill={job.isFavorite ? "currentColor" : "none"}/></button></div><div className="mt-4 flex flex-wrap gap-2 text-xs"><span className="rounded-full bg-[#0d2547] px-3 py-1 font-semibold text-white">估算匹配 {job.match.score}</span><span className="rounded-full bg-slate-100 px-3 py-1">{job.match.confidence}</span>{job.isApplied && <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs text-emerald-700">已投递</span>}{job.availabilityStatus !== "active" && <span className="rounded-full bg-rose-50 px-3 py-1 text-rose-700">{job.availabilityStatus === "needs_confirmation" ? "招聘类型待核对" : "可能已关闭"}</span>}</div><div className="mt-4 grid gap-2 text-sm text-slate-600 sm:grid-cols-2"><span className="flex items-center gap-2"><MapPin size={15}/>{job.location || "地点待确认"}</span><span className="flex items-center gap-2"><BriefcaseBusiness size={15}/>{job.recruitmentType || "类型待确认"}</span><span className="flex items-center gap-2"><Building2 size={15}/>{job.department || job.category || "部门待确认"}</span><span className="flex items-center gap-2"><CalendarDays size={15}/>{job.publishedDate || "发布时间待确认"}</span></div><p className="mt-4 line-clamp-2 text-sm leading-6 text-slate-600">{job.match.reasons[0]}</p><p className="mt-3 text-xs text-slate-400">来源：{job.source || "手动导入"} · 更新于 {(job.sourceUpdatedAt || job.fetchedAt || job.updatedAt)?.slice(0, 10)}</p><div className="mt-auto flex flex-wrap gap-2 pt-5"><Button size="sm" variant="outline" onClick={open}>查看详情</Button><Button size="sm" variant="ghost" onClick={dismiss}><ThumbsDown/>不感兴趣</Button><Button size="sm" className="ml-auto" onClick={official}><ExternalLink/>{readOnly?"查看示例来源":"前往官网"}</Button></div></article>;
 }
 
 function JobDetail({ job, close, official, apply, readOnly = false }: { job: DiscoveryJob | null; close: () => void; official: () => void; apply: () => void; readOnly?: boolean }) {
-  return <Dialog open={!!job} onOpenChange={(open) => !open && close()}><DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-4xl">{job && <><DialogHeader><DialogTitle>{job.company} · {job.position}</DialogTitle><DialogDescription>{job.department || "部门待确认"} · {job.location || "地点待确认"} · {job.recruitmentType || "招聘类型待确认"}</DialogDescription></DialogHeader><div className="grid gap-4 lg:grid-cols-[1fr_320px]"><div className="space-y-4"><DetailSection title="岗位职责" text={job.description}/><DetailSection title="任职要求" text={job.requirements}/><DetailSection title="原始岗位资料" text={job.rawText}/></div><aside className="space-y-4"><section className="rounded-2xl border border-[#bce9e1] bg-[#e9fbf7] p-4"><div className="flex items-center gap-2 font-semibold text-[#07675c]"><Sparkles size={17}/>估算匹配 {job.match.score}</div><p className="mt-1 text-xs text-[#28796f]">{job.match.confidence} · 当前为本地规则结果</p><List title="推荐理由" values={job.match.reasons}/><List title="需要确认" values={job.match.confirmations}/><List title="暂不符合" values={job.match.mismatches}/></section><section className="rounded-2xl border p-4 text-sm text-slate-600"><p><b>来源：</b>{job.source || "手动导入"}</p><p className="mt-2"><b>原始更新时间：</b>{job.sourceUpdatedAt || "待确认"}</p><p className="mt-2"><b>最近获取：</b>{job.fetchedAt?.slice(0, 16).replace("T", " ") || "—"}</p></section></aside></div><div className="flex flex-wrap justify-end gap-2"><Button variant="outline" onClick={official}><ExternalLink/>前往官网申请</Button>{!readOnly&&!job.isApplied && <Button onClick={apply}>我已完成投递</Button>}{job.isApplied && <span className="self-center rounded-full bg-emerald-100 px-3 py-1 text-sm text-emerald-700">已加入投递管理</span>}</div></>}</DialogContent></Dialog>;
+  return <Dialog open={!!job} onOpenChange={(open) => !open && close()}><DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-4xl">{job && <><DialogHeader><DialogTitle>{job.company} · {job.position}</DialogTitle><DialogDescription>{job.department || "部门待确认"} · {job.location || "地点待确认"} · {job.recruitmentType || "招聘类型待确认"}</DialogDescription></DialogHeader><div className="grid gap-4 lg:grid-cols-[1fr_320px]"><div className="space-y-4"><DetailSection title="岗位职责" text={job.description}/><DetailSection title="任职要求" text={job.requirements}/><DetailSection title="原始岗位资料" text={job.rawText}/></div><aside className="space-y-4"><section className="rounded-2xl border border-[#bce9e1] bg-[#e9fbf7] p-4"><div className="flex items-center gap-2 font-semibold text-[#07675c]"><Sparkles size={17}/>估算匹配 {job.match.score}</div><p className="mt-1 text-xs text-[#28796f]">{job.match.confidence} · 当前为本地规则结果</p><List title="推荐理由" values={job.match.reasons}/><List title="需要确认" values={job.match.confirmations}/><List title="暂不符合" values={job.match.mismatches}/></section><section className="rounded-2xl border p-4 text-sm text-slate-600"><p><b>来源：</b>{job.source || "手动导入"}</p><p className="mt-2"><b>原始更新时间：</b>{job.sourceUpdatedAt || "待确认"}</p><p className="mt-2"><b>最近获取：</b>{job.fetchedAt?.slice(0, 16).replace("T", " ") || "—"}</p></section></aside></div><div className="flex flex-wrap justify-end gap-2"><Button variant="outline" onClick={official}><ExternalLink/>{readOnly?"查看示例来源":"前往官网申请"}</Button>{!readOnly&&!job.isApplied && <Button onClick={apply}>我已完成投递</Button>}{job.isApplied && <span className="self-center rounded-full bg-emerald-100 px-3 py-1 text-sm text-emerald-700">已加入投递管理</span>}</div></>}</DialogContent></Dialog>;
 }
 
 function PreferenceDialog({ open, close, value, resumes, saved }: { open: boolean; close: () => void; value: DiscoveryPreferences | null; resumes: ResumeOption[]; saved: () => Promise<void> }) {

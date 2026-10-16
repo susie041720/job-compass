@@ -3,7 +3,8 @@ import { desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { baseResumes, discoveryPreferences } from "@/db/schema";
 import { defaultDiscoveryPreferences, DiscoveryPreferences } from "@/lib/job-discovery";
-import { blockPublicDemoMutation } from "@/lib/public-demo";
+import { blockPublicDemoMutation, isPublicDemoMode } from "@/lib/public-demo";
+import { PUBLIC_DEMO_DISCOVERY_PREFERENCES, PUBLIC_DEMO_RESUMES } from "@/lib/public-demo-data";
 
 const clean = (value: unknown) => typeof value === "string" ? value.trim() : "";
 const cleanList = (value: unknown) => Array.isArray(value)
@@ -29,6 +30,7 @@ function serialize(row: typeof discoveryPreferences.$inferSelect): DiscoveryPref
 }
 
 export async function GET() {
+  if (isPublicDemoMode()) return NextResponse.json({ preferences: PUBLIC_DEMO_DISCOVERY_PREFERENCES, resumes: PUBLIC_DEMO_RESUMES.map(({ id, name, updatedAt }) => ({ id, name, updatedAt })) });
   try {
     const db = getDb();
     const [stored, resumes] = await Promise.all([

@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 import { desc } from "drizzle-orm";
 import { getDb } from "@/db";
 import { baseResumes, jobs, resumeVersions } from "@/db/schema";
+import { isPublicDemoMode } from "@/lib/public-demo";
+import { PUBLIC_DEMO_RESUME_OPTIONS } from "@/lib/public-demo-data";
 
 export async function GET() {
+  if (isPublicDemoMode()) return NextResponse.json(PUBLIC_DEMO_RESUME_OPTIONS);
   try {
     const db = getDb();
     const [bases, versions, allJobs] = await Promise.all([

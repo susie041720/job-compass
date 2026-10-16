@@ -4,7 +4,8 @@ import { getDb } from "@/db";
 import { baseResumes, discoveredJobs, discoveryPreferences, discoveryStates, jobApplications, jobs } from "@/db/schema";
 import { calculateDiscoveryMatch, defaultDiscoveryPreferences, DiscoveryJobInput, DiscoveryPreferences, discoveryFingerprint } from "@/lib/job-discovery";
 import { normalizeUrl } from "@/lib/job-import";
-import { blockPublicDemoMutation } from "@/lib/public-demo";
+import { blockPublicDemoMutation, isPublicDemoMode } from "@/lib/public-demo";
+import { PUBLIC_DEMO_DISCOVERY_JOBS, PUBLIC_DEMO_DISCOVERY_PREFERENCES, PUBLIC_DEMO_RESUMES } from "@/lib/public-demo-data";
 
 const clean = (value: unknown) => typeof value === "string" ? value.trim() : "";
 const list = (value: string) => { try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed : []; } catch { return []; } };
@@ -24,6 +25,14 @@ function sameJob(a: DiscoveryJobInput, b: { company: string; position: string; l
 }
 
 export async function GET() {
+  if (isPublicDemoMode()) {
+    const resumeText = PUBLIC_DEMO_RESUMES[0].confirmedContent;
+    return NextResponse.json({
+      jobs: PUBLIC_DEMO_DISCOVERY_JOBS.map((job) => ({ ...job, isDismissed: false, dismissReason: "", viewCount: 0, outboundCount: 0, lastViewedAt: "", lastOutboundAt: "", isApplied: false, canonicalJobId: "", match: calculateDiscoveryMatch(job, PUBLIC_DEMO_DISCOVERY_PREFERENCES, resumeText, "") })),
+      preferences: PUBLIC_DEMO_DISCOVERY_PREFERENCES,
+      resumeConfigured: true,
+    });
+  }
   try {
     const db = getDb();
     const [rows, preferenceRows, canonicalJobs, applications] = await Promise.all([

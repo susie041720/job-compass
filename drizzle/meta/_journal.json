@@ -36,6 +36,13 @@
       "when": 1790170225080,
       "tag": "0004_dark_power_man",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1790701567305,
+      "tag": "0005_equal_aaron_stack",
+      "breakpoints": true
     }
   ]
 }

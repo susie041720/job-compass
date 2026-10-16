@@ -12,6 +12,7 @@ test("public demo mode only accepts explicit true values", () => {
 
 test("public demo warning explains persistence and privacy", () => {
   assert.match(PUBLIC_DEMO_MESSAGE, /虚构示例数据/);
-  assert.match(PUBLIC_DEMO_MESSAGE, /不会保存/);
+  assert.match(PUBLIC_DEMO_MESSAGE, /当前浏览器/);
+  assert.match(PUBLIC_DEMO_MESSAGE, /不会写入服务器/);
   assert.match(PUBLIC_DEMO_MESSAGE, /请勿上传真实简历/);
 });

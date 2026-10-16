@@ -46,3 +46,6 @@ next-env.d.ts
 /.codex/
 /outputs/
 /work/
+
+# Generated from the installed PDF.js version at dev/build startup.
+/public/pdfjs/

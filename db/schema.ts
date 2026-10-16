@@ -47,6 +47,7 @@ export const todos = sqliteTable("todos", {
 // `applications` table stays in place so existing local data can be migrated
 // without destructive changes.
 export const jobs = sqliteTable("jobs", {
+  assessmentHistory: text("assessment_history").notNull().default("[]"),
   id: text("id").primaryKey(),
   company: text("company").notNull().default(""),
   position: text("position").notNull().default(""),

@@ -1,0 +1,1 @@
+ALTER TABLE `jobs` ADD `assessment_history` text DEFAULT '[]' NOT NULL;
