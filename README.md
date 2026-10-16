@@ -104,6 +104,8 @@ npm run dev
 
 ## 公开作品站
 
+在线体验：<https://job-compass-susie.siqic25.chatgpt.site/>
+
 公开部署使用 Cloudflare Workers。`PUBLIC_DEMO_MODE=true` 时，页面会显示独立介绍页和“演示版”标识。访客可实际新增、编辑、删除、筛选、更新状态、导入和导出投递记录；这些记录仅保存到访客自己的浏览器 `localStorage`，不会写入服务端或与其他访客共享。“恢复示例数据”可以随时清除本地修改。
 
 服务端仍会拒绝新增、编辑、删除、上传、外部抓取和 AI 请求，形成第二层保护。公开版的简历工作台和岗位发现只读取代码中的虚构预设样例，不接收真实简历，不声称实时调用 AI 或抓取招聘网站。请勿把本地 `.wrangler` 数据库、真实简历、`.env` 或 API Key 上传到 GitHub。完整部署步骤见 [docs/PUBLIC_DEPLOYMENT.md](docs/PUBLIC_DEPLOYMENT.md)。
