@@ -104,7 +104,9 @@ npm run dev
 
 ## 公开作品站
 
-在线体验：<https://job-compass-susie.siqic25.chatgpt.site/>
+在线体验（推荐）：<https://susie041720.github.io/job-compass/>
+
+Sites 备用地址：<https://job-compass-susie.siqic25.chatgpt.site/>（部分微信内置浏览器可能拦截）
 
 公开部署使用 Cloudflare Workers。`PUBLIC_DEMO_MODE=true` 时，页面会显示独立介绍页和“演示版”标识。访客可实际新增、编辑、删除、筛选、更新状态、导入和导出投递记录；这些记录仅保存到访客自己的浏览器 `localStorage`，不会写入服务端或与其他访客共享。“恢复示例数据”可以随时清除本地修改。
 
